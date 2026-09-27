@@ -85,7 +85,31 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, commitMutation.isPending, stageMutation.isPending, onClose])
 
-  if (!isOpen) return null
+  // Filtered errors for interactive errors table (declared unconditionally at top level)
+  const uniqueErrorCodes = useMemo(() => {
+    if (!previewData?.errors) return []
+    const codes = new Set(previewData.errors.map((e) => e.error_code))
+    return Array.from(codes)
+  }, [previewData?.errors])
+
+  const filteredErrors = useMemo(() => {
+    if (!previewData?.errors) return []
+    return previewData.errors.filter((err: ImportErrorItem) => {
+      const matchesCode =
+        errorFilterCode === 'ALL' || err.error_code === errorFilterCode
+      const query = errorSearchQuery.toLowerCase().trim()
+      if (!query) return matchesCode
+
+      const matchesSearch =
+        err.row_number.toString().includes(query) ||
+        (err.column_name && err.column_name.toLowerCase().includes(query)) ||
+        (err.raw_value && err.raw_value.toLowerCase().includes(query)) ||
+        err.error_code.toLowerCase().includes(query) ||
+        err.error_message.toLowerCase().includes(query)
+
+      return matchesCode && matchesSearch
+    })
+  }, [previewData?.errors, errorFilterCode, errorSearchQuery])
 
   // File drag & drop handlers
   const handleDrag = (e: React.DragEvent) => {
@@ -171,32 +195,6 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
     }
   }
 
-  // Filtered errors for interactive errors table
-  const uniqueErrorCodes = useMemo(() => {
-    if (!previewData?.errors) return []
-    const codes = new Set(previewData.errors.map((e) => e.error_code))
-    return Array.from(codes)
-  }, [previewData?.errors])
-
-  const filteredErrors = useMemo(() => {
-    if (!previewData?.errors) return []
-    return previewData.errors.filter((err: ImportErrorItem) => {
-      const matchesCode =
-        errorFilterCode === 'ALL' || err.error_code === errorFilterCode
-      const query = errorSearchQuery.toLowerCase().trim()
-      if (!query) return matchesCode
-
-      const matchesSearch =
-        err.row_number.toString().includes(query) ||
-        (err.column_name && err.column_name.toLowerCase().includes(query)) ||
-        (err.raw_value && err.raw_value.toLowerCase().includes(query)) ||
-        err.error_code.toLowerCase().includes(query) ||
-        err.error_message.toLowerCase().includes(query)
-
-      return matchesCode && matchesSearch
-    })
-  }, [previewData?.errors, errorFilterCode, errorSearchQuery])
-
   // Formatting helper
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B'
@@ -221,6 +219,8 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
         return 'bg-slate-100 text-slate-800 border-slate-300'
     }
   }
+
+  if (!isOpen) return null
 
   return (
     <div
