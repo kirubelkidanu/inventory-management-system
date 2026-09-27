@@ -305,3 +305,53 @@ export interface ReconciliationDiscrepancy {
   discrepancy: number | string
 }
 
+export interface ImportBatch {
+  id: string
+  batch_number: string
+  import_type: string
+  file_name: string
+  file_size_bytes: number
+  total_rows: number
+  valid_rows: number
+  error_rows: number
+  status: string
+  staged_data?: Record<string, any> | null
+  created_by: string
+  created_at: string
+  completed_at?: string | null
+}
+
+export interface ImportErrorItem {
+  id: string
+  batch_id: string
+  row_number: number
+  column_name?: string | null
+  raw_value?: string | null
+  error_code: string
+  error_message: string
+  created_at: string
+}
+
+export interface StagedItemSample {
+  item_code: string
+  description: string
+  category_id?: string
+  category_code?: string
+  default_unit: string
+  [key: string]: any
+}
+
+export interface ImportBatchPreviewResponse {
+  batch: ImportBatch
+  errors: ImportErrorItem[]
+  valid_items_sample: StagedItemSample[]
+}
+
+export interface CommitBatchResponse {
+  message: string
+  batch_id: string
+  batch_number: string
+  imported_count: number
+}
+
+

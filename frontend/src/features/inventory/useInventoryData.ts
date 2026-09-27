@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
 import type {
   Item,
@@ -6,6 +6,8 @@ import type {
   Warehouse,
   InventoryBalance,
   StockMovement,
+  ImportBatchPreviewResponse,
+  CommitBatchResponse,
 } from '@/types'
 
 export interface ItemQueryParams {
@@ -156,5 +158,40 @@ export function useItemStockMovements(itemId?: string, warehouseId?: string) {
     },
     enabled: !!itemId,
     staleTime: 15 * 1000,
+  })
+}
+
+export function useStageItemMaster() {
+  return useMutation<ImportBatchPreviewResponse, Error, File>({
+    mutationFn: async (file: File) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await api.post<ImportBatchPreviewResponse>(
+        '/imports/items/stage',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      )
+      return response.data
+    },
+  })
+}
+
+export function useCommitItemMaster() {
+  const queryClient = useQueryClient()
+  return useMutation<CommitBatchResponse, Error, string>({
+    mutationFn: async (batchId: string) => {
+      const response = await api.post<CommitBatchResponse>(
+        `/imports/items/${batchId}/commit`
+      )
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+    },
   })
 }

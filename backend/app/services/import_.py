@@ -121,6 +121,10 @@ class ImportService:
             raw_unit = row_data.get("default_unit")
             default_unit = str(raw_unit).strip() if raw_unit is not None else ""
 
+            # Drop trailing empty draft rows that have no description and no unit (e.g. 07-PC-D0159)
+            if not description and not default_unit:
+                continue
+
             # Validate item_code
             if not item_code:
                 import_errors.append(
@@ -183,10 +187,27 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # Validate category
+            # Validate category across category_str, sub_category, and main_category
             matched_category: Optional[Category] = None
-            if category_str:
-                matched_category = categories_map.get(category_str.upper())
+            category_candidates = [
+                category_str,
+                str(row_data.get("sub_category", "")).strip(),
+                str(row_data.get("main_category", "")).strip(),
+            ]
+            for cat_cand in category_candidates:
+                if not cat_cand:
+                    continue
+                cand_clean = cat_cand.upper()
+                matched_category = categories_map.get(cand_clean)
+                if matched_category is not None:
+                    break
+                if " - " in cand_clean:
+                    for part in cand_clean.split(" - "):
+                        matched_category = categories_map.get(part.strip())
+                        if matched_category is not None:
+                            break
+                if matched_category is not None:
+                    break
 
             if matched_category is None:
                 import_errors.append(
@@ -1029,13 +1050,25 @@ class ImportService:
             ):
                 mapping["description"] = idx
             elif name in (
-                "major category",
                 "main catagories",
                 "main categories",
+                "major category",
+            ):
+                mapping["main_category"] = idx
+                if "category" not in mapping:
+                    mapping["category"] = idx
+            elif name in (
+                "sub gatagory code",
+                "sub category",
+                "subcategory",
+            ):
+                mapping["sub_category"] = idx
+                if "category" not in mapping:
+                    mapping["category"] = idx
+            elif name in (
                 "category",
                 "category_code",
-                "sub category",
-                "sub gatagory code",
+                "category code",
             ):
                 mapping["category"] = idx
             elif name in (
@@ -1066,7 +1099,9 @@ class ImportService:
         return {
             "item_code": get_val("item_code"),
             "description": get_val("description"),
-            "category": get_val("category"),
+            "category": get_val("category") or get_val("sub_category") or get_val("main_category"),
+            "main_category": get_val("main_category"),
+            "sub_category": get_val("sub_category"),
             "default_unit": get_val("default_unit"),
         }
 

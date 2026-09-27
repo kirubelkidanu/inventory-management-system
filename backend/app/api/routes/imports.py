@@ -50,6 +50,34 @@ async def upload_item_master_file(
     )
 
 
+@router.post(
+    "/items/stage",
+    response_model=ImportBatchPreview,
+    status_code=status.HTTP_200_OK,
+    summary="Stage, validate, and preview Item Master spreadsheet (.xlsx or .csv)",
+)
+async def stage_item_master_file(
+    file: UploadFile = File(..., description="Spreadsheet file (.xlsx or .csv)"),
+    current_user: AuthenticatedUser = Depends(
+        require_roles("ADMIN", "INVENTORY_MANAGER")
+    ),
+    service: ImportService = Depends(get_import_service),
+):
+    user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded file is empty.",
+        )
+    batch = await service.stage_item_master_file(
+        user_id=user_id,
+        file_name=file.filename or "item_master.xlsx",
+        file_bytes=file_bytes,
+    )
+    return await service.get_batch_preview(batch_id=batch.id)
+
+
 @router.get(
     "/batches/{batch_id}",
     response_model=ImportBatchPreview,
@@ -67,6 +95,10 @@ async def get_batch_preview(
 
 @router.post(
     "/batches/{batch_id}/commit",
+    summary="Commit valid staged items from an import batch into the Item Master catalog",
+)
+@router.post(
+    "/items/{batch_id}/commit",
     summary="Commit valid staged items from an import batch into the Item Master catalog",
 )
 async def commit_batch(

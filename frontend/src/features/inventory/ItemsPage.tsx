@@ -9,10 +9,12 @@ import {
   CheckCircle,
   XCircle,
   Package,
+  Upload,
 } from 'lucide-react'
 import type { Item } from '@/types'
 import { useItems, useCategories } from './useInventoryData'
 import { ItemDetailsDrawer } from './ItemDetailsDrawer'
+import { ImportItemsModal } from './components/ImportItemsModal'
 import { cn } from '@/lib/utils'
 
 export const ItemsPage: React.FC = () => {
@@ -22,6 +24,7 @@ export const ItemsPage: React.FC = () => {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [selectedItem, setSelectedItem] = useState<Item | null>(null)
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false)
 
   const { data: categories } = useCategories()
 
@@ -69,14 +72,24 @@ export const ItemsPage: React.FC = () => {
             Authoritative SKU definitions, category classifications, and global warehouse stock audit ledgers.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50"
-        >
-          <RotateCw className={cn('h-3.5 w-3.5', (isLoading || isFetching) && 'animate-spin')} />
-          <span>Refresh Catalog</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsImportModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-sky-500"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            <span>Import from Excel</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50"
+          >
+            <RotateCw className={cn('h-3.5 w-3.5', (isLoading || isFetching) && 'animate-spin')} />
+            <span>Refresh Catalog</span>
+          </button>
+        </div>
       </div>
 
       {/* Search & Category Filter Bar */}
@@ -284,6 +297,15 @@ export const ItemsPage: React.FC = () => {
           onClose={() => setSelectedItem(null)}
         />
       )}
+
+      {/* Item Master Excel Import Modal */}
+      <ImportItemsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={() => {
+          refetch()
+        }}
+      />
     </div>
   )
 }

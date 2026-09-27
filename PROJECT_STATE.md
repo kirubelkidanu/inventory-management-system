@@ -1,12 +1,13 @@
 ## Current Phase
 
-Initial Master Data & Opening Balances Seeded in Supabase PostgreSQL
+Item Master Excel Import Modal & Dual-Phase Ingestion Completed
 
 ## Project Status
 
+The Item Master Excel Import feature has been fully built and verified end-to-end. Administrators and Inventory Managers can upload client `.xlsx` and `.csv` workbooks, inspect staging metrics and row-level validation errors in an interactive table, and atomically commit valid SKUs into the master catalog.
 The entire backend and frontend enterprise inventory management platform is fully configured, secured, verified, seeded with live production master data and opening stock balances in Supabase PostgreSQL, and passes **211 tests** across 15 test modules with clean client production packaging.
 Environment variable templates (`backend/.env.example`, `frontend/.env.example`, and root `.env.example`) strictly segregate server-side secrets from client-safe variables with zero committed credentials. Security middleware (`CORSMiddleware`), JWT authentication routes (`/api/v1/auth/token`, `/api/v1/auth/demo-login`, `/api/v1/auth/me`), and database stack trace sanitization are active in `backend/app/main.py`. The live PostgreSQL database is verified end-to-end with zero reconciliation discrepancies (`vw_reconciliation_discrepancies` == 0), dual-write balance/ledger immutability, in-transit transfer tracking, and authoritative Trial Balance reporting.
-The Excel import engine is fully prepared for client Item Master and Initial Stock spreadsheet ingestion.
+The Excel import engine is fully integrated with UI modal staging, error inspection, and atomic database commits.
 
 ## Database Status
 
@@ -222,4 +223,47 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
   * Verified zero secret leaks with strict `.gitignore` rules.
   * Pushed to GitHub: `https://github.com/kirubelkidanu/inventory-management-system.git` (branch `main`).
 - **Overall Status**: **FULLY PRODUCTION READY & DEPLOYED TO GITHUB**.
+
+## Item Master Excel Import Modal Milestone (2026-09-27)
+
+### What Was Implemented
+1. **Backend Spreadsheet Processing & Route Aliasing**:
+   - Enhanced `backend/app/services/import_.py` (`_detect_headers`, `_extract_row_data`) to parse client workbooks having columns `inventory id`, `description`, `main catagories`, `sub gatagory code`, and `unit measurment` without dictionary key collision.
+   - Robust multi-strategy category matching across `category_str`, `sub_category`, `main_category`, and hyphen-split tokens against `categories_map`.
+   - Automatic skipping of trailing blank draft rows (e.g. rows with both empty description and empty unit).
+   - Flagging of missing units as `MISSING_UOM` to allow visual inspection in modal before committing.
+   - Added endpoint routes in `backend/app/api/routes/imports.py`:
+     * `POST /api/v1/imports/items/stage`: Uploads, validates, and returns `ImportBatchPreview` (batch metrics + errors list + valid items sample) in a single request.
+     * `POST /api/v1/imports/items/{batch_id}/commit`: Aliased endpoint for atomic catalog ingestion.
+
+2. **Frontend Import Modal & Interactive Validation Error Table**:
+   - Defined interfaces in `frontend/src/types/index.ts`: `ImportBatch`, `ImportErrorItem`, `StagedItemSample`, `ImportBatchPreviewResponse`, and `CommitBatchResponse`.
+   - Created React Query hooks in `frontend/src/features/inventory/useInventoryData.ts`: `useStageItemMaster`, `useCommitItemMaster` with automatic cache invalidation (`['items']`, `['inventory-balances']`).
+   - Built `frontend/src/features/inventory/components/ImportItemsModal.tsx`:
+     * Drag & drop / file picker accepting `.xlsx`, `.xls`, `.csv` with size checks and clear column guidelines.
+     * Staging summary metrics: Total Rows, Valid Rows, Error Rows, Batch Reference.
+     * Status alert banners (Green success banner if 0 errors; Amber banner if errors exist).
+     * Interactive Validation Errors Table with live search, error code filtering (`UNKNOWN_CATEGORY`, `MISSING_CODE`, `MISSING_DESCRIPTION`, `MISSING_UOM`, `DUPLICATE_CODE`), raw value display, and descriptions.
+     * Staged Valid Items Preview table showing item code, description, category, and UOM.
+     * Atomic commit action button with loading spinners, error banners, and post-commit success confirmation card.
+   - Integrated into `frontend/src/features/inventory/ItemsPage.tsx` with "+ Import from Excel" header button, modal wiring, and catalog refetch.
+   - Re-exported component from `frontend/src/pages/ItemMasterPage.tsx` for routing flexibility.
+
+### Files Changed
+- `backend/app/services/import_.py`
+- `backend/app/api/routes/imports.py`
+- `backend/requirements.txt`
+- `frontend/src/types/index.ts`
+- `frontend/src/features/inventory/useInventoryData.ts`
+- `frontend/src/features/inventory/components/ImportItemsModal.tsx`
+- `frontend/src/features/inventory/ItemsPage.tsx`
+- `frontend/src/pages/ItemMasterPage.tsx`
+- `project_state.md`
+
+### Tests & Verification Performed
+- **Import Tests**: `pytest backend/tests/test_imports.py` -> **18 passed** in 0.48s (100% pass rate).
+- **Full Backend Suite**: `pytest backend/tests` -> **211 passed** in 3.55s across 15 test suites.
+- **Frontend Production Build**: `npm run build` (`tsc -b && vite build`) -> Exit Code 0, 1,697 modules transformed, zero TypeScript errors.
+- **Mirrored Repository**: Synchronized cleanly to `C:\dev\inventory-management-system`.
+
 
