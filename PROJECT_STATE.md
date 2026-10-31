@@ -1,27 +1,27 @@
 ## Current Phase
 
-Item Master Excel Import Modal & Dual-Phase Ingestion Completed
+Official Project Sites & Warehouse Bin Locations Management Configured
 
 ## Project Status
 
-The Item Master Excel Import feature has been fully built and verified end-to-end. Administrators and Inventory Managers can upload client `.xlsx` and `.csv` workbooks, inspect staging metrics and row-level validation errors in an interactive table, and atomically commit valid SKUs into the master catalog.
-The entire backend and frontend enterprise inventory management platform is fully configured, secured, verified, seeded with live production master data and opening stock balances in Supabase PostgreSQL, and passes **211 tests** across 15 test modules with clean client production packaging.
+The official 13 client project sites and corresponding warehouse bin locations have been fully seeded and integrated. Placeholder records (`WH001`, `WH002`, `PRJ-KZ-01`) have been safely archived without violating ledger immutability (`is_active = FALSE`, marked `[Archived]`). Full dynamic site and warehouse bin management has been implemented across the backend API, repositories, services, and frontend administration screens (`/warehouses` and `/projects`).
+The entire backend and frontend enterprise inventory management platform is fully configured, secured, verified, seeded with live production master data and opening stock balances in Supabase PostgreSQL, and passes **220 tests** across 15 test modules with clean client production packaging.
 Environment variable templates (`backend/.env.example`, `frontend/.env.example`, and root `.env.example`) strictly segregate server-side secrets from client-safe variables with zero committed credentials. Security middleware (`CORSMiddleware`), JWT authentication routes (`/api/v1/auth/token`, `/api/v1/auth/demo-login`, `/api/v1/auth/me`), and database stack trace sanitization are active in `backend/app/main.py`. The live PostgreSQL database is verified end-to-end with zero reconciliation discrepancies (`vw_reconciliation_discrepancies` == 0), dual-write balance/ledger immutability, in-transit transfer tracking, and authoritative Trial Balance reporting.
-The Excel import engine is fully integrated with UI modal staging, error inspection, and atomic database commits.
 
 ## Database Status
 
 Migrations:
 - database/migrations/001_initial_schema.sql (EXECUTED SUCCESSFULLY)
 - database/migrations/002_expand_audit_log_actions.sql (EXECUTED SUCCESSFULLY)
+- database/migrations/003_seed_official_sites_and_warehouses.sql (EXECUTED SUCCESSFULLY)
 
 Database foundation & Seeded Data:
 - 14 tables created & 1 view active
 - pg_trgm extension enabled
 - Demo Users: 4 accounts seeded with foreign key links to `auth.users` (`admin@ims.local`, `manager@ims.local`, `storekeeper@ims.local`, `viewer@ims.local`)
-- Project: `PRJ-KZ-01` (Kazanchis Commercial Complex)
-- Warehouses: `WH001` (Central Logistics WH), `WH002` (Site Store WH002)
-- Categories: `01` (CEMENT), `02` (STEEL), `07` (PAINT AND CHEMICAL)
+- Official Sites: 13 active projects (`PRJ-KZ`, `PRJ-KL`, `PRJ-KL-GAR`, `PRJ-GR`, `PRJ-LM`, `PRJ-ET`, `PRJ-JM`, `PRJ-BS`, `PRJ-NK`, `PRJ-CK`, `PRJ-JM3`, `PRJ-HO`, `PRJ-AB`) + 1 archived (`PRJ-KZ-01`)
+- Official Warehouse Bins: 13 active warehouses (`KZ-WH-001`, `KL-WH-001`, `KL-WH-002`, `GR-WH-001`, `LM-WH-001`, `ET-WH-001`, `JM-WH-001`, `BS-WH-001`, `NK-WH-001`, `CK-WH-001`, `JM3-WH-001`, `HO-WH-001`, `AB-WH-0001`) + 2 archived (`WH001`, `WH002`)
+- Categories: 14 official categories (`01` through `14`) active
 - Master Items: `01-CM-00001` (Cement), `02-ST-00001` (Rebar 12mm), `02-ST-00002` (Rebar 16mm), `07-PC-00001` (Anti-Rust Primer)
 - Opening Balances (Strict ADR-001 Dual-Write): Opening GRV `GRV-20260919-CED420F0` posted via `TransactionService`:
   * Cement Grade 42.5N: 1,200 BAG
@@ -107,7 +107,7 @@ Dependencies installed:
 ## Frontend Status
 
 Status:
-- VERIFIED CLEAN PRODUCTION BUILD (`npm run build`: 0 errors, 0 warnings, 2.79s build time)
+- VERIFIED CLEAN PRODUCTION BUILD (`npm run build`: 0 errors, 0 warnings, 1.82s build time)
 
 Stack & Dependencies:
 - React 19 + TypeScript + Vite 8
@@ -127,7 +127,7 @@ Architecture & Aliases:
 
 ## Current Task
 
-Frontend Authentication & Demo Sign-In Loop Fix Completed. Resolved the login redirect bounce loop by implementing compliant backend authentication endpoints (`/api/v1/auth/token`, `/api/v1/auth/demo-login`, `/api/v1/auth/me`), issuing cryptographically valid signed HS256 JWT access tokens, hardening Axios 401 handling, and wiring `LoginPage` to live authentication flows.
+Official Project Sites & Warehouse Bin Locations Management Configured. Seeded the client's official 13 project sites and warehouse bin locations into Supabase PostgreSQL, gracefully archived placeholder entities (`WH001`, `WH002`, `PRJ-KZ-01`), implemented repository and service filtering, and built dynamic administrative CRUD interfaces (`WarehousesPage` and `ProjectsPage`) wired into navigation and routes.
 
 ## Implemented This Cycle
 
@@ -146,8 +146,8 @@ Frontend Authentication & Demo Sign-In Loop Fix Completed. Resolved the login re
 
 - **Full Backend Test Suite**: `.\.venv\Scripts\pytest backend/tests`:
   - Exit Code: **0**
-  - Result: **211 passed, 2 warnings in 5.36s** across all 15 test modules:
-    * `test_auth.py`: 13 passed (health check, headers, validation, issued token auth, etc.)
+  - Result: **220 passed, 2 warnings in 4.19s** across all 15 test modules:
+    * `test_auth.py`: 13 passed
     * `test_health.py`: 6 passed
     * `test_e2e_reconciliation.py`: 5 passed
     * `test_transactions.py`: 28 passed
@@ -158,7 +158,7 @@ Frontend Authentication & Demo Sign-In Loop Fix Completed. Resolved the login re
     * `test_inventory.py`: 17 passed
     * `test_items.py`: 12 passed
     * `test_initial_stock_import.py`: 15 passed
-    * `test_imports.py`: 18 passed
+    * `test_imports.py`: 27 passed
     * `test_warehouses.py`: 11 passed
     * `test_projects.py`: 10 passed
     * `test_categories.py`: 10 passed
@@ -166,8 +166,8 @@ Frontend Authentication & Demo Sign-In Loop Fix Completed. Resolved the login re
   - Exit Code: **0**
   - Errors: **0**
   - Warnings: **0**
-  - Modules Transformed: **1,696**
-  - Build Time: **3.12s**
+  - Modules Transformed: **1,700**
+  - Build Time: **1.82s**
 
 ## Comprehensive Production Readiness & Security Audit (2026-09-21)
 
@@ -217,7 +217,7 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
 - **Transaction Concurrency & Invariants**: 100% Compliant (Deterministic locks, atomic dual-writes, negative stock protection).
 - **Database & Ledger Consistency**: 100% Compliant (0 reconciliation discrepancies).
 - **Anti-Hardcoding & Data Integrity**: 100% Compliant (Dynamic entity resolution, zero fake fallback data).
-- **Test & Build Health**: 211/211 pytest passed, clean Vite production bundle.
+- **Test & Build Health**: 220/220 pytest passed, clean Vite production bundle.
 - **Repository Deployment (2026-09-26)**:
   * Resolved OneDrive `cldflt.sys` "mmap failed" issue by mirroring clean repository to `C:\dev\inventory-management-system`.
   * Verified zero secret leaks with strict `.gitignore` rules.
@@ -355,3 +355,47 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
    - Backend tests: `pytest backend/tests/test_imports.py` (27 passed) and full test suite `pytest backend/tests` (220 passed, 0 failed in 2.99s).
    - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,697 modules transformed in 2.24s).
    - Re-packed production distribution: `frontend/frontend-dist.tar.gz` (182 KB).
+
+## Official Project Sites & Warehouse Bin Locations Management (2026-10-31)
+
+### What Was Fixed & Implemented
+1. **Official 13 Client Sites & Warehouse Bin Locations**:
+   - Configured the 13 authoritative project sites and linked warehouse bin locations per client requirements:
+     * Kazanchis: Project Code `PRJ-KZ` ('Kazanchis Project') -> Warehouse `KZ-WH-001` ('Kazanchis Store / Bin 001')
+     * Kality: Project Code `PRJ-KL` ('Kality Project') -> Warehouse `KL-WH-001` ('Kality Store / Bin 001')
+     * Kaliti Garage: Project Code `PRJ-KL-GAR` ('Kaliti Garage') -> Warehouse `KL-WH-002` ('Kaliti Garage Store / Bin 002')
+     * Goro ICT Park: Project Code `PRJ-GR` ('Goro ICT Park Project') -> Warehouse `GR-WH-001` ('Goro ICT Park Store / Bin 001')
+     * Lamberet: Project Code `PRJ-LM` ('Lamberet Project') -> Warehouse `LM-WH-001` ('Lamberet Store / Bin 001')
+     * Entoto: Project Code `PRJ-ET` ('Entoto Project') -> Warehouse `ET-WH-001` ('Entoto Store / Bin 001')
+     * Jimma: Project Code `PRJ-JM` ('Jimma Project') -> Warehouse `JM-WH-001` ('Jimma Store / Bin 001')
+     * Beshasha: Project Code `PRJ-BS` ('Beshasha Project') -> Warehouse `BS-WH-001` ('Beshasha Store / Bin 001')
+     * Nekemt: Project Code `PRJ-NK` ('Nekemt Project') -> Warehouse `NK-WH-001` ('Nekemt Store / Bin 001')
+     * Chaka: Project Code `PRJ-CK` ('Chaka Project') -> Warehouse `CK-WH-001` ('Chaka Store / Bin 001')
+     * Jemo 3: Project Code `PRJ-JM3` ('Jemo 3 Project') -> Warehouse `JM3-WH-001` ('Jemo 3 Store / Bin 001')
+     * Head Office: Project Code `PRJ-HO` ('Head Office') -> Warehouse `HO-WH-001` ('Head Office Store / Bin 001')
+     * Ambo: Project Code `PRJ-AB` ('Ambo Project') -> Warehouse `AB-WH-0001` ('Ambo Store / Bin 0001')
+
+2. **Placeholder Entity Deprecation & Ledger Invariant Preservation**:
+   - Safely archived legacy demo entities `WH001` ('Central Logistics WH'), `WH002` ('Site Store WH002'), and `PRJ-KZ-01` ('Kazanchis Commercial Complex') by setting `is_active = FALSE` and prepending `[Archived]`.
+   - Strictly preserved database ledger immutability (`prevent_movement_mutation` trigger) and historical integrity with 0 reconciliation discrepancies (`vw_reconciliation_discrepancies` == 0).
+
+3. **Backend Repositories, Services & Routes**:
+   - Created SQL migration `database/migrations/003_seed_official_sites_and_warehouses.sql` and seeding script `backend/app/scripts/seed_sites.py`.
+   - Updated `WarehouseRepository` and `ProjectRepository` to support filtering by `is_active: bool | None = None`.
+   - Updated `WarehouseService.list_warehouses` and `ProjectService.list_projects` with `is_active` parameter.
+   - Enhanced `delete_warehouse` and `delete_project` with soft-deactivation fallback on `IntegrityError` to preserve historical foreign key links.
+   - Exposed `is_active` query parameter in `GET /api/v1/warehouses` and `GET /api/v1/projects`.
+
+4. **Frontend Dynamic Site & Warehouse Management**:
+   - Added `location?: string | null` to `Project` interface in `frontend/src/types/index.ts`.
+   - Created `frontend/src/features/sites/useSitesData.ts` React Query hooks for warehouses and projects CRUD and active toggling.
+   - Built `frontend/src/features/sites/WarehousesPage.tsx`: Full enterprise table with search, status filtering, Add/Edit modal dialog, active toggling, and project assignment.
+   - Built `frontend/src/features/sites/ProjectsPage.tsx`: Full enterprise table with search, status filtering, Add/Edit modal dialog, active toggling.
+   - Connected routes in `frontend/src/App.tsx` (`/warehouses` and `/projects`).
+   - Added 'Sites & Locations' navigation section to `frontend/src/layouts/AppLayout.tsx` and updated header pill from hardcoded placeholder to `13 Project Warehouses`.
+
+5. **Quality Gates & Tests**:
+   - Backend tests: `pytest backend/tests` (220 passed in 4.19s across 15 test suites).
+   - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,700 modules transformed in 1.82s).
+   - Re-packed production distribution: `frontend/frontend-dist.tar.gz` (182 KB).
+   - Mirrored changes cleanly to `C:\dev\inventory-management-system` and pushed commit `cda84cc` to GitHub `origin main`.
