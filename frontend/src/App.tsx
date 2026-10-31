@@ -9,6 +9,7 @@ import { LoginPage } from '@/features/auth/LoginPage'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { InventoryBalancesPage } from '@/features/inventory/InventoryBalancesPage'
 import { ItemsPage } from '@/features/inventory/ItemsPage'
+import { OpeningBalancePage } from '@/features/inventory/OpeningBalancePage'
 import { TransactionsListPage } from '@/features/transactions/TransactionsListPage'
 import { GRVPage } from '@/features/transactions/GRVPage'
 import { SIVPage } from '@/features/transactions/SIVPage'
@@ -48,6 +49,7 @@ export const App: React.FC = () => {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/inventory" element={<InventoryBalancesPage />} />
                 <Route path="/items" element={<ItemsPage />} />
+                <Route path="/opening-balance" element={<OpeningBalancePage />} />
 
                 {/* Sites & Locations */}
                 <Route path="/warehouses" element={<WarehousesPage />} />

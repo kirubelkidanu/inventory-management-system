@@ -7,6 +7,8 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.item import Item
+from app.models.inventory import InventoryBalance
 from app.models.transaction import (
     Transaction,
     TransactionLine,
@@ -21,6 +23,8 @@ from app.schemas.transaction import (
     ISTVCreate,
     SIVCreate,
     SRVCreate,
+    OpeningBalanceCreate,
+    OpeningBalanceLineCreate,
 )
 
 
@@ -1139,3 +1143,186 @@ class TransactionService:
             limit=limit,
         )
 
+    async def create_and_post_opening_balance(
+        self,
+        user_id: Any,
+        payload: Optional[OpeningBalanceCreate] = None,
+        warehouse_id: Optional[uuid.UUID] = None,
+        lines: Optional[List[Any]] = None,
+        project_id: Optional[uuid.UUID] = None,
+        transaction_date: Optional[date] = None,
+        remarks: Optional[str] = None,
+        commit_session: bool = True,
+    ) -> Transaction:
+        """
+        Atomically creates and posts an Opening Balance (Initial Stock) adjustment voucher.
+        Adheres to ADR-001, ADR-002, ADR-003, ADR-006, and ADR-009:
+        - Creates a POSTED transaction header with transaction_type = 'ADJUSTMENT',
+          adjustment_reason = 'Opening Balance', and external_reference = 'OPENING_BALANCE'.
+        - Locks inventory_balances rows deterministically with SELECT FOR UPDATE.
+        - Increments quantity_on_hand on inventory_balances.
+        - Appends immutable stock_movements (movement_type = 'IN', signed_quantity = +quantity)
+          with the resulting running_balance.
+        - Persists unit_price on transaction_lines.
+        - Emits an audit_logs record for the transaction.
+        - Commits atomically in one PostgreSQL transaction.
+        """
+        if payload is not None:
+            warehouse_id = payload.warehouse_id
+            lines = payload.lines
+            project_id = payload.project_id
+            transaction_date = payload.transaction_date
+            remarks = payload.remarks
+
+        if not lines:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Opening balance requires at least one item line.",
+            )
+
+        parsed_user_id = _to_uuid(user_id)
+        effective_date = transaction_date or date.today()
+
+        # Extract item IDs and enforce uniqueness (ADR-006)
+        extracted_lines = []
+        for line in lines:
+            if isinstance(line, dict):
+                item_id = _to_uuid(line["item_id"])
+                quantity = Decimal(str(line["quantity"]))
+                unit = str(line.get("unit") or "").strip()
+                unit_price = Decimal(str(line["unit_price"])) if line.get("unit_price") is not None else Decimal("0.0000")
+                line_remarks = line.get("remarks")
+            else:
+                item_id = _to_uuid(line.item_id)
+                quantity = Decimal(str(line.quantity))
+                unit = str(line.unit or "").strip()
+                unit_price = Decimal(str(line.unit_price)) if line.unit_price is not None else Decimal("0.0000")
+                line_remarks = line.remarks
+
+            if quantity <= Decimal("0"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Line quantity must be strictly positive, received {quantity}.",
+                )
+            if unit_price < Decimal("0"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Line unit price must be non-negative, received {unit_price}.",
+                )
+
+            extracted_lines.append({
+                "item_id": item_id,
+                "quantity": quantity,
+                "unit": unit,
+                "unit_price": unit_price,
+                "remarks": line_remarks,
+            })
+
+        item_ids = [l["item_id"] for l in extracted_lines]
+        if len(item_ids) != len(set(item_ids)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Duplicate item in opening balance lines is not allowed (ADR-006).",
+            )
+
+        now_utc = datetime.now(timezone.utc)
+        tx_number = generate_transaction_number("ADJ", effective_date)
+        tx_id = uuid.uuid4()
+
+        try:
+            # 1. Acquire row-level locks deterministically on inventory balances
+            locked_balances = await self.repo.lock_inventory_balances_for_update(
+                warehouse_id=warehouse_id,
+                item_ids=item_ids,
+            )
+
+            # 2. Create Transaction Header
+            tx = Transaction(
+                id=tx_id,
+                transaction_number=tx_number,
+                transaction_type="ADJUSTMENT",
+                status="POSTED",
+                transaction_date=effective_date,
+                warehouse_id=warehouse_id,
+                project_id=project_id,
+                external_reference="OPENING_BALANCE",
+                adjustment_reason="Opening Balance",
+                remarks=remarks or "Opening balance initial stock voucher",
+                created_by=parsed_user_id,
+                created_at=now_utc,
+                posted_by=parsed_user_id,
+                posted_at=now_utc,
+            )
+
+            tx_lines = []
+            for idx, line_data in enumerate(extracted_lines, start=1):
+                unit_val = line_data["unit"]
+                if not unit_val:
+                    item_obj = await self.session.get(Item, line_data["item_id"])
+                    unit_val = item_obj.default_unit if item_obj else "PCS"
+
+                line_obj = TransactionLine(
+                    id=uuid.uuid4(),
+                    transaction_id=tx_id,
+                    line_number=idx,
+                    item_id=line_data["item_id"],
+                    quantity=line_data["quantity"],
+                    unit=unit_val,
+                    unit_price=line_data["unit_price"],
+                    remarks=line_data["remarks"],
+                )
+                tx_lines.append(line_obj)
+
+            tx.lines = tx_lines
+
+            await self.repo.create_transaction(tx)
+            await self.repo.create_transaction_lines(tx_lines)
+            await self.session.flush()
+
+            for line in tx_lines:
+                balance = await self.repo.get_or_create_balance(
+                    warehouse_id=warehouse_id,
+                    item_id=line.item_id,
+                    existing_balances=locked_balances,
+                )
+                balance.quantity_on_hand += line.quantity
+                balance.updated_at = now_utc
+                running_bal = balance.quantity_on_hand
+
+                await self.repo.create_stock_movement(
+                    transaction_id=tx_id,
+                    transaction_line_id=line.id,
+                    item_id=line.item_id,
+                    warehouse_id=warehouse_id,
+                    project_id=project_id,
+                    movement_type="IN",
+                    quantity=line.quantity,
+                    running_balance=running_bal,
+                    movement_date=effective_date,
+                )
+
+            await self.repo.create_audit_log(
+                actor_user_id=parsed_user_id,
+                action="TRANSACTION_POSTED",
+                entity_type="transactions",
+                entity_id=str(tx.id),
+                before_state=None,
+                after_state={
+                    "transaction_number": tx.transaction_number,
+                    "transaction_type": tx.transaction_type,
+                    "status": tx.status,
+                    "warehouse_id": str(warehouse_id),
+                    "line_count": len(tx_lines),
+                },
+                change_summary=f"Posted opening balance voucher {tx.transaction_number} with {len(tx_lines)} line(s).",
+                reason=remarks or "Opening balance initial stock entry",
+            )
+
+            if commit_session:
+                await self.session.commit()
+            else:
+                await self.session.flush()
+            return tx
+        except Exception:
+            await self.session.rollback()
+            raise

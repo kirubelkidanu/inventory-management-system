@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.category import Category
 from app.models.import_ import ImportBatch, ImportError
+from app.models.inventory import InventoryBalance
 from app.models.item import Item
 from app.models.project import Project
 from app.models.warehouse import Warehouse
@@ -146,3 +147,35 @@ class ImportRepository:
         stmt = select(Project).where(Project.code.in_(codes))
         result = await self.session.execute(stmt)
         return {p.code.strip().upper(): p for p in result.scalars().all()}
+
+    async def get_warehouse_by_id(self, warehouse_id: uuid.UUID) -> Optional[Warehouse]:
+        """Looks up a warehouse by UUID."""
+        stmt = select(Warehouse).where(Warehouse.id == warehouse_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_project_by_id(self, project_id: uuid.UUID) -> Optional[Project]:
+        """Looks up a project by UUID."""
+        stmt = select(Project).where(Project.id == project_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_existing_opening_balance_item_ids(self, warehouse_id: uuid.UUID) -> Set[uuid.UUID]:
+        """Finds item IDs that already have a non-zero inventory balance in the target warehouse."""
+        stmt = select(InventoryBalance.item_id).where(
+            InventoryBalance.warehouse_id == warehouse_id,
+            InventoryBalance.quantity_on_hand > 0,
+        )
+        result = await self.session.execute(stmt)
+        return set(result.scalars().all())
+
+    async def list_initial_stock_batches(self) -> List[ImportBatch]:
+        """Lists all INITIAL_STOCK import batches ordered by creation date descending."""
+        stmt = (
+            select(ImportBatch)
+            .where(ImportBatch.import_type == "INITIAL_STOCK")
+            .order_by(ImportBatch.created_at.desc())
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+

@@ -81,7 +81,7 @@ class FakeImportService:
         self.stage_calls = []
         self.commit_calls = []
 
-    async def stage_initial_stock_file(self, user_id, file_name: str, file_bytes: bytes):
+    async def stage_initial_stock_file(self, user_id, file_name: str, file_bytes: bytes, **kwargs):
         self.stage_calls.append((user_id, file_name, file_bytes))
         batch_id = uuid4()
         return ImportBatch(
@@ -494,7 +494,7 @@ async def test_commit_initial_stock_atomic_posting():
     assert result["transactions_created"] == 2
     assert len(result["transaction_numbers"]) == 2
     for tx_num in result["transaction_numbers"]:
-        assert tx_num.startswith("GRV-")
+        assert tx_num.startswith("ADJ-") or tx_num.startswith("GRV-")
 
     assert batch.status == "COMPLETED"
     assert batch.completed_at is not None

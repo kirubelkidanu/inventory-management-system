@@ -92,6 +92,8 @@ export interface TransactionLine {
   item_id: string
   quantity: number | string
   unit: string
+  unit_price?: number | string | null
+  total_price?: number | string | null
   remarks?: string | null
   item?: Item
 }
@@ -355,4 +357,53 @@ export interface CommitBatchResponse {
   imported_count: number
 }
 
+export interface InitialStockStagedRow {
+  row_number: number
+  warehouse_id: string
+  warehouse_code: string
+  warehouse_name?: string
+  item_id: string
+  item_code: string
+  item_name?: string
+  item_description?: string
+  project_id?: string | null
+  project_code?: string | null
+  quantity: number | string
+  unit: string
+  unit_price: number | string
+  total_price: number | string
+  remarks?: string | null
+}
 
+export interface InitialStockBatchPreviewResponse {
+  batch: ImportBatch
+  errors: ImportErrorItem[]
+  valid_rows_sample: InitialStockStagedRow[]
+  total_value?: number | string
+}
+
+export interface CommitInitialStockResponse {
+  message: string
+  batch_id: string
+  batch_number: string
+  imported_rows: number
+  warehouses_affected: number
+  transactions_created: number
+  transaction_numbers: string[]
+}
+
+export interface OpeningBalanceLineInput {
+  item_id: string
+  quantity: number | string
+  unit?: string
+  unit_price?: number | string
+  remarks?: string | null
+}
+
+export interface OpeningBalanceCreateInput {
+  warehouse_id: string
+  project_id?: string | null
+  transaction_date: string
+  remarks?: string
+  lines: OpeningBalanceLineInput[]
+}

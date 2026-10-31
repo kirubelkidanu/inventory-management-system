@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class ImportBatchRead(BaseModel):

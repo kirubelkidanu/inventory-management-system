@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.schemas.transaction import (
+    OpeningBalanceCreate,
     AdjustmentCreate,
     GRVCreate,
     ISTRVCreate,
@@ -189,4 +190,33 @@ async def get_transaction(
             detail="Transaction not found.",
         )
     return transaction
+
+@router.post(
+    "/opening-balance",
+    response_model=TransactionRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create and post an opening balance initial stock voucher directly",
+)
+@router.post(
+    "/opening-balance/",
+    response_model=TransactionRead,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+async def create_opening_balance(
+    payload: OpeningBalanceCreate,
+    current_user: AuthenticatedUser = Depends(
+        require_roles("ADMIN", "INVENTORY_MANAGER")
+    ),
+    service: TransactionService = Depends(get_transaction_service),
+):
+    user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    return await service.create_and_post_opening_balance(
+        user_id=user_id,
+        warehouse_id=payload.warehouse_id,
+        project_id=payload.project_id,
+        transaction_date=payload.transaction_date,
+        remarks=payload.remarks,
+        lines=payload.lines,
+    )
 

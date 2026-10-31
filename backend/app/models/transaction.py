@@ -65,6 +65,7 @@ class TransactionLine(Base):
     item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="RESTRICT"), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     transaction = relationship("Transaction", back_populates="lines")
@@ -123,4 +124,4 @@ class TransferLine(Base):
 
     @property
     def remaining_quantity(self) -> Decimal:
-        return self.sent_quantity - self.received_quantity
+        return self.sent_quantity - self.received_quantity

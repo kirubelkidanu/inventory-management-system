@@ -8,6 +8,11 @@ import type {
   StockMovement,
   ImportBatchPreviewResponse,
   CommitBatchResponse,
+  ImportBatch,
+  InitialStockBatchPreviewResponse,
+  CommitInitialStockResponse,
+  OpeningBalanceCreateInput,
+  Transaction,
 } from '@/types'
 
 export interface ItemQueryParams {
@@ -198,5 +203,100 @@ export function useCommitItemMaster() {
       queryClient.invalidateQueries({ queryKey: ['items'] })
       queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
     },
+  })
+}
+
+export function useStageInitialStock() {
+  return useMutation<
+    InitialStockBatchPreviewResponse,
+    Error,
+    { file: File; warehouseId?: string; warehouse_id?: string; projectId?: string; project_id?: string; transactionDate?: string; transaction_date?: string; remarks?: string }
+  >({
+    mutationFn: async ({ file, warehouseId, warehouse_id, projectId, project_id, transactionDate, transaction_date, remarks }) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      const targetWh = warehouseId || warehouse_id || ''
+      if (targetWh) formData.append('warehouse_id', targetWh)
+      const targetProj = projectId || project_id
+      if (targetProj) formData.append('project_id', targetProj)
+      const targetDate = transactionDate || transaction_date
+      if (targetDate) formData.append('transaction_date', targetDate)
+      if (remarks) formData.append('remarks', remarks)
+
+      const stageRes = await api.post<ImportBatch>('/imports/initial-stock/stage', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 120000,
+      })
+
+      const previewRes = await api.get<InitialStockBatchPreviewResponse>(
+        `/imports/initial-stock/${stageRes.data.id}`
+      )
+      return previewRes.data
+    },
+  })
+}
+
+export function useCommitInitialStock() {
+  const queryClient = useQueryClient()
+  return useMutation<CommitInitialStockResponse, Error, string>({
+    mutationFn: async (batchId: string) => {
+      const response = await api.post<CommitInitialStockResponse>(
+        `/imports/initial-stock/${batchId}/commit`,
+        null,
+        {
+          timeout: 120000,
+        }
+      )
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+      queryClient.invalidateQueries({ queryKey: ['initial-stock-batches'] })
+      queryClient.invalidateQueries({ queryKey: ['opening-balance-transactions'] })
+    },
+  })
+}
+
+export function useCreateManualOpeningBalance() {
+  const queryClient = useQueryClient()
+  return useMutation<Transaction, Error, OpeningBalanceCreateInput>({
+    mutationFn: async (payload: OpeningBalanceCreateInput) => {
+      const response = await api.post<Transaction>('/transactions/opening-balance', payload)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+      queryClient.invalidateQueries({ queryKey: ['opening-balance-transactions'] })
+    },
+  })
+}
+
+export function useInitialStockBatches() {
+  return useQuery<ImportBatch[]>({
+    queryKey: ['initial-stock-batches'],
+    queryFn: async () => {
+      const response = await api.get<ImportBatch[]>('/imports/initial-stock/batches')
+      return response.data || []
+    },
+    staleTime: 30 * 1000,
+  })
+}
+
+export function useOpeningBalanceTransactions() {
+  return useQuery<Transaction[]>({
+    queryKey: ['opening-balance-transactions'],
+    queryFn: async () => {
+      const response = await api.get<Transaction[]>('/transactions', {
+        params: {
+          transaction_type: 'ADJUSTMENT',
+          external_reference: 'OPENING_BALANCE',
+          limit: 100,
+        },
+      })
+      return response.data || []
+    },
+    staleTime: 30 * 1000,
   })
 }

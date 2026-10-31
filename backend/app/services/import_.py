@@ -1,3 +1,4 @@
+from app.schemas.transaction import OpeningBalanceCreate, OpeningBalanceLineCreate
 # backend/app/services/import_.py
 import csv
 from datetime import date, datetime, timezone
@@ -18,6 +19,7 @@ from app.models.transaction import Transaction, TransactionLine
 from app.models.warehouse import Warehouse
 from app.repositories.import_ import ImportRepository
 from app.repositories.transaction import TransactionRepository
+from app.services.transaction import TransactionService
 from app.schemas.import_ import (
     ImportBatchPreview,
     ImportBatchRead,
@@ -50,6 +52,8 @@ class ImportService:
         self.session = session
         self.repo = ImportRepository(session)
         self.tx_repo = TransactionRepository(session)
+        self.tx_service = TransactionService(session)
+        self.tx_service.repo = self.tx_repo
 
     async def stage_item_master_file(
         self,
@@ -403,11 +407,19 @@ class ImportService:
         errors = await self.repo.get_errors_by_batch_id(batch_id)
         staged_rows = (batch.staged_data or {}).get("rows", [])
         sample_rows = staged_rows[:50]
+        total_value = sum(
+            (
+                Decimal(str(r.get("quantity", "0"))) * Decimal(str(r.get("unit_price", "0")))
+                for r in staged_rows
+            ),
+            Decimal("0.0000"),
+        )
 
         return InitialStockBatchPreview(
             batch=ImportBatchRead.model_validate(batch),
             errors=[ImportErrorRead.model_validate(e) for e in errors],
             valid_rows_sample=sample_rows,
+            total_value=total_value,
         )
 
     async def commit_item_master_import(
@@ -527,17 +539,22 @@ class ImportService:
         user_id: Any,
         file_name: str,
         file_bytes: bytes,
+        warehouse_id: Optional[uuid.UUID] = None,
+        project_id: Optional[uuid.UUID] = None,
+        transaction_date: Optional[date] = None,
+        remarks: Optional[str] = None,
+        **kwargs: Any,
     ) -> ImportBatch:
         """
-        Parses and stages an Initial Stock spreadsheet (.xlsx or .csv).
-        Validates row-by-row:
-        - warehouse_code exists in warehouses table (INVALID_WAREHOUSE)
-        - item_code exists in items table (INVALID_ITEM)
-        - quantity is a positive decimal > 0 (INVALID_QUANTITY)
-        - unit matches item default_unit or is non-empty (INVALID_UOM)
-        - duplicate (warehouse, item) pairs in file flagged (DUPLICATE_ENTRY)
-        - project_code exists if provided (INVALID_PROJECT)
-        Records granular errors in import_errors and valid rows in staged_data JSONB.
+        Parses and stages an Initial Stock spreadsheet (.xlsx or .csv) supporting 4-column sheets.
+        Validates:
+        - target warehouse existence
+        - item exists in catalog (INVALID_ITEM)
+        - positive quantity > 0 (INVALID_QUANTITY)
+        - UOM defaults to item default_unit; error if mismatched (INVALID_UOM)
+        - unit_price defaults to 0.0000; error if negative (INVALID_PRICE)
+        - duplicates in file flagged (DUPLICATE_IN_FILE)
+        - pre-existing stock balances flagged (ALREADY_EXISTS)
         """
         lower_name = file_name.lower()
         if not (lower_name.endswith(".xlsx") or lower_name.endswith(".csv")):
@@ -550,9 +567,9 @@ class ImportService:
         batch_id = uuid.uuid4()
         batch_number = generate_batch_number("IMP-STOCK")
         now_utc = datetime.now(timezone.utc)
+        effective_date = transaction_date or date.today()
 
-        # 1. Parse rows from spreadsheet into candidate records
-        raw_rows: List[Tuple[int, Dict[str, Any]]] = []
+        # Parse rows
         if lower_name.endswith(".csv"):
             raw_rows = self._parse_initial_stock_csv_rows(file_bytes)
         else:
@@ -564,7 +581,26 @@ class ImportService:
                 detail="The uploaded file contains no data rows.",
             )
 
-        # 2. Extract candidate codes to pre-fetch warehouses, items, and projects
+        # Target warehouse/project lookup
+        target_wh: Optional[Warehouse] = None
+        if warehouse_id is not None:
+            target_wh = await self.repo.get_warehouse_by_id(warehouse_id)
+            if target_wh is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Target warehouse {warehouse_id} not found.",
+                )
+
+        target_proj: Optional[Project] = None
+        if project_id is not None:
+            target_proj = await self.repo.get_project_by_id(project_id)
+
+        # Existing items in warehouse for collision detection
+        existing_wh_items: Set[uuid.UUID] = set()
+        if target_wh is not None:
+            existing_wh_items = await self.repo.get_existing_opening_balance_item_ids(target_wh.id)
+
+        # Extract candidate codes
         candidate_wh_codes = list({
             str(data.get("warehouse_code", "")).strip().upper()
             for _, data in raw_rows
@@ -585,10 +621,10 @@ class ImportService:
         items_map = await self.repo.get_items_by_codes(candidate_item_codes)
         projects_map = await self.repo.get_projects_by_codes(candidate_proj_codes)
 
-        # 3. Row-by-row validation
-        seen_file_pairs: Set[Tuple[str, str]] = set()
         import_errors: List[ImportError] = []
         valid_rows: List[Dict[str, Any]] = []
+        seen_items_in_file: Set[str] = set()
+        seen_wh_item_pairs: Set[Tuple[str, str]] = set()
 
         for row_number, row_data in raw_rows:
             row_has_error = False
@@ -603,29 +639,16 @@ class ImportService:
             raw_unit = row_data.get("unit")
             unit = str(raw_unit).strip() if raw_unit is not None else ""
 
+            raw_unit_price = row_data.get("unit_price")
             raw_project_code = row_data.get("project_code")
             project_code = str(raw_project_code).strip() if raw_project_code is not None else ""
 
             raw_remarks = row_data.get("remarks")
-            remarks = str(raw_remarks).strip() if raw_remarks is not None else None
+            row_remarks = str(raw_remarks).strip() if raw_remarks is not None else remarks
 
-            # Validate warehouse_code
+            # Determine Warehouse
             matched_wh: Optional[Warehouse] = None
-            if not wh_code:
-                import_errors.append(
-                    ImportError(
-                        id=uuid.uuid4(),
-                        batch_id=batch_id,
-                        row_number=row_number,
-                        column_name="warehouse_code",
-                        raw_value=str(raw_wh_code) if raw_wh_code is not None else None,
-                        error_code="INVALID_WAREHOUSE",
-                        error_message="Warehouse code is required.",
-                        created_at=now_utc,
-                    )
-                )
-                row_has_error = True
-            else:
+            if wh_code:
                 matched_wh = warehouses_map.get(wh_code.upper())
                 if matched_wh is None:
                     import_errors.append(
@@ -641,8 +664,25 @@ class ImportService:
                         )
                     )
                     row_has_error = True
+            elif target_wh is not None:
+                matched_wh = target_wh
+                wh_code = target_wh.code
+            else:
+                import_errors.append(
+                    ImportError(
+                        id=uuid.uuid4(),
+                        batch_id=batch_id,
+                        row_number=row_number,
+                        column_name="warehouse_code",
+                        raw_value=None,
+                        error_code="INVALID_WAREHOUSE",
+                        error_message="Warehouse is required (specify in file or select target warehouse).",
+                        created_at=now_utc,
+                    )
+                )
+                row_has_error = True
 
-            # Validate item_code
+            # Determine Item
             matched_item: Optional[Item] = None
             if not item_code:
                 import_errors.append(
@@ -651,9 +691,9 @@ class ImportService:
                         batch_id=batch_id,
                         row_number=row_number,
                         column_name="item_code",
-                        raw_value=str(raw_item_code) if raw_item_code is not None else None,
+                        raw_value=None,
                         error_code="INVALID_ITEM",
-                        error_message="Item code is required.",
+                        error_message="Item code (inventory id) is required.",
                         created_at=now_utc,
                     )
                 )
@@ -675,10 +715,11 @@ class ImportService:
                     )
                     row_has_error = True
 
-            # Validate duplicate (warehouse, item) pairs in file
-            if wh_code and item_code:
+            # In-file duplicate checking
+            if item_code and wh_code:
                 pair = (wh_code.upper(), item_code.upper())
-                if pair in seen_file_pairs:
+                if pair in seen_wh_item_pairs:
+                    err_code = "DUPLICATE_IN_FILE" if (target_wh is not None and not raw_wh_code) else "DUPLICATE_ENTRY"
                     import_errors.append(
                         ImportError(
                             id=uuid.uuid4(),
@@ -686,16 +727,33 @@ class ImportService:
                             row_number=row_number,
                             column_name="item_code",
                             raw_value=item_code,
-                            error_code="DUPLICATE_ENTRY",
+                            error_code=err_code,
                             error_message=f"Duplicate entry for warehouse '{wh_code}' and item '{item_code}' in file.",
                             created_at=now_utc,
                         )
                     )
                     row_has_error = True
                 else:
-                    seen_file_pairs.add(pair)
+                    seen_wh_item_pairs.add(pair)
 
-            # Validate quantity
+            # Pre-existing balance checking
+            if matched_item is not None and matched_wh is not None:
+                if matched_item.id in existing_wh_items:
+                    import_errors.append(
+                        ImportError(
+                            id=uuid.uuid4(),
+                            batch_id=batch_id,
+                            row_number=row_number,
+                            column_name="item_code",
+                            raw_value=item_code,
+                            error_code="ALREADY_EXISTS",
+                            error_message=f"Item '{item_code}' already has an initial balance in warehouse '{matched_wh.code}'.",
+                            created_at=now_utc,
+                        )
+                    )
+                    row_has_error = True
+
+            # Quantity validation
             parsed_qty: Optional[Decimal] = None
             if raw_quantity is None or str(raw_quantity).strip() == "":
                 import_errors.append(
@@ -704,7 +762,7 @@ class ImportService:
                         batch_id=batch_id,
                         row_number=row_number,
                         column_name="quantity",
-                        raw_value=str(raw_quantity) if raw_quantity is not None else None,
+                        raw_value=None,
                         error_code="INVALID_QUANTITY",
                         error_message="Quantity is required.",
                         created_at=now_utc,
@@ -743,38 +801,62 @@ class ImportService:
                     )
                     row_has_error = True
 
-            # Validate unit
+            # Unit validation & fallback
             if not unit:
+                if matched_item is not None:
+                    unit = matched_item.default_unit
+                else:
+                    unit = "PCS"
+            elif matched_item is not None and unit.upper() != matched_item.default_unit.upper():
                 import_errors.append(
                     ImportError(
                         id=uuid.uuid4(),
                         batch_id=batch_id,
                         row_number=row_number,
                         column_name="unit",
-                        raw_value=str(raw_unit) if raw_unit is not None else None,
+                        raw_value=unit,
                         error_code="INVALID_UOM",
-                        error_message="Unit of measurement is required.",
+                        error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
                         created_at=now_utc,
                     )
                 )
                 row_has_error = True
-            elif matched_item is not None:
-                if unit.upper() != matched_item.default_unit.upper():
+
+            # Unit Price validation & defaulting to 0.0000
+            parsed_price = Decimal("0.0000")
+            if raw_unit_price is not None and str(raw_unit_price).strip() != "":
+                try:
+                    parsed_price = Decimal(str(raw_unit_price).strip())
+                    if parsed_price < Decimal("0"):
+                        import_errors.append(
+                            ImportError(
+                                id=uuid.uuid4(),
+                                batch_id=batch_id,
+                                row_number=row_number,
+                                column_name="unit_price",
+                                raw_value=str(raw_unit_price),
+                                error_code="INVALID_PRICE",
+                                error_message="Unit price must be non-negative.",
+                                created_at=now_utc,
+                            )
+                        )
+                        row_has_error = True
+                except Exception:
                     import_errors.append(
                         ImportError(
                             id=uuid.uuid4(),
                             batch_id=batch_id,
                             row_number=row_number,
-                            column_name="unit",
-                            raw_value=unit,
-                            error_code="INVALID_UOM",
-                            error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
+                            column_name="unit_price",
+                            raw_value=str(raw_unit_price),
+                            error_code="INVALID_PRICE",
+                            error_message=f"Invalid unit price: '{raw_unit_price}'.",
                             created_at=now_utc,
                         )
                     )
                     row_has_error = True
 
-            # Validate optional project_code
+            # Project
             matched_proj: Optional[Project] = None
             if project_code:
                 matched_proj = projects_map.get(project_code.upper())
@@ -792,6 +874,8 @@ class ImportService:
                         )
                     )
                     row_has_error = True
+            elif target_proj is not None:
+                matched_proj = target_proj
 
             if (
                 not row_has_error
@@ -807,16 +891,17 @@ class ImportService:
                         "warehouse_name": matched_wh.name,
                         "item_id": str(matched_item.id),
                         "item_code": matched_item.item_code,
-                        "item_description": matched_item.description,
+                        "item_name": matched_item.description,
                         "project_id": str(matched_proj.id) if matched_proj else None,
                         "project_code": matched_proj.code if matched_proj else None,
                         "quantity": str(parsed_qty),
                         "unit": unit,
-                        "remarks": remarks,
+                        "unit_price": str(raw_unit_price).strip() if (raw_unit_price is not None and str(raw_unit_price).strip()) else str(parsed_price),
+                        "total_price": str((parsed_qty * parsed_price).quantize(Decimal("0.0001"))),
+                        "remarks": row_remarks,
                     }
                 )
 
-        # 4. Determine batch status and counts
         total_rows = len(raw_rows)
         error_rows = len({err.row_number for err in import_errors})
         valid_rows_count = len(valid_rows)
@@ -826,7 +911,14 @@ class ImportService:
         else:
             batch_status = "PARSED"
 
-        # 5. Persist ImportBatch and ImportErrors
+        total_value = sum(
+            (
+                Decimal(str(r.get("quantity", "0"))) * Decimal(str(r.get("unit_price", "0")))
+                for r in valid_rows
+            ),
+            Decimal("0.0000"),
+        )
+
         try:
             batch = ImportBatch(
                 id=batch_id,
@@ -838,7 +930,14 @@ class ImportService:
                 valid_rows=valid_rows_count,
                 error_rows=error_rows,
                 status=batch_status,
-                staged_data={"rows": valid_rows},
+                staged_data={
+                    "rows": valid_rows,
+                    "warehouse_id": str(target_wh.id) if target_wh else None,
+                    "project_id": str(target_proj.id) if target_proj else None,
+                    "transaction_date": str(effective_date),
+                    "total_value": str(total_value),
+                    "remarks": remarks,
+                },
                 created_by=parsed_user_id,
                 created_at=now_utc,
             )
@@ -860,20 +959,8 @@ class ImportService:
     ) -> Dict[str, Any]:
         """
         Atomically commits valid staged initial stock from an import batch.
-        Workflow:
-        1. Validates batch existence and status (rejects COMPLETED or non-staged).
-        2. Validates presence of valid staged rows.
-        3. Groups staged rows by warehouse_id.
-        4. For each warehouse:
-           - Generates GRV transaction header (status='POSTED', remarks=f'Initial stock import batch {batch.batch_number}').
-           - Acquires deterministic row locks on inventory_balances.
-           - Creates transaction lines.
-           - Increments inventory_balances.quantity_on_hand.
-           - Appends immutable stock_movements (movement_type='IN', signed_quantity=+quantity).
-           - Records audit log entry.
-        5. Updates batch status to COMPLETED and sets completed_at.
-        6. Records audit log for batch commit.
-        7. Commits all writes atomically in one PostgreSQL transaction.
+        Routes through TransactionService.create_and_post_opening_balance
+        to enforce dual-write ledger consistency (ADR-001, ADR-002, ADR-003, ADR-009).
         """
         parsed_user_id = _to_uuid(user_id)
         batch = await self.repo.get_batch_by_id(batch_id)
@@ -914,116 +1001,42 @@ class ImportService:
             wh_uuid = _to_uuid(r["warehouse_id"])
             grouped_by_warehouse.setdefault(wh_uuid, []).append(r)
 
-        tx_repo = self.tx_repo
         now_utc = datetime.now(timezone.utc)
         today_date = date.today()
         created_transactions: List[Transaction] = []
+        self.tx_service.repo = self.tx_repo
 
         try:
-            for warehouse_id, rows in grouped_by_warehouse.items():
-                tx_id = uuid.uuid4()
-                tx_number = generate_transaction_number("GRV", today_date)
-
-                # Determine project_id if consistent across rows, or default None
-                proj_ids = {r.get("project_id") for r in rows if r.get("project_id")}
-                header_project_id = _to_uuid(list(proj_ids)[0]) if len(proj_ids) == 1 else None
-
-                # 1. Create Transaction header
-                transaction = Transaction(
-                    id=tx_id,
-                    transaction_number=tx_number,
-                    transaction_type="GRV",
-                    status="POSTED",
-                    transaction_date=today_date,
-                    warehouse_id=warehouse_id,
-                    project_id=header_project_id,
-                    supplier_name="INITIAL STOCK OPENING",
-                    received_grv_no=batch.batch_number,
-                    remarks=f"Initial stock import batch {batch.batch_number}",
-                    created_by=parsed_user_id,
-                    created_at=now_utc,
-                    posted_by=parsed_user_id,
-                    posted_at=now_utc,
-                )
-                await tx_repo.create_transaction(transaction)
-
-                # 2. Lock inventory balances deterministically
-                item_ids = [_to_uuid(r["item_id"]) for r in rows]
-                locked_balances = await tx_repo.lock_inventory_balances_for_update(
-                    warehouse_id=warehouse_id,
-                    item_ids=item_ids,
-                )
-
-                # 3. Create Transaction lines
-                lines: List[TransactionLine] = []
-                for idx, r in enumerate(rows, start=1):
-                    line = TransactionLine(
-                        id=uuid.uuid4(),
-                        transaction_id=tx_id,
-                        line_number=idx,
+            for wh_uuid, rows in grouped_by_warehouse.items():
+                proj_uuid = _to_uuid(rows[0]["project_id"]) if rows[0].get("project_id") else None
+                ob_lines = [
+                    OpeningBalanceLineCreate(
                         item_id=_to_uuid(r["item_id"]),
                         quantity=Decimal(str(r["quantity"])),
-                        unit=r["unit"],
+                        unit=r.get("unit"),
+                        unit_price=Decimal(str(r.get("unit_price", "0"))),
                         remarks=r.get("remarks"),
                     )
-                    lines.append(line)
-                await tx_repo.create_transaction_lines(lines)
-
-                # 4. Update balances and append stock movements
-                for idx, line in enumerate(lines):
-                    r = rows[idx]
-                    line_proj_id = _to_uuid(r["project_id"]) if r.get("project_id") else header_project_id
-
-                    balance = await tx_repo.get_or_create_balance(
-                        warehouse_id=warehouse_id,
-                        item_id=line.item_id,
-                        existing_balances=locked_balances,
-                    )
-                    balance.quantity_on_hand += line.quantity
-                    balance.updated_at = now_utc
-                    running_bal = balance.quantity_on_hand
-
-                    await tx_repo.create_stock_movement(
-                        transaction_id=tx_id,
-                        transaction_line_id=line.id,
-                        item_id=line.item_id,
-                        warehouse_id=warehouse_id,
-                        project_id=line_proj_id,
-                        movement_type="IN",
-                        quantity=line.quantity,
-                        running_balance=running_bal,
-                        movement_date=today_date,
-                    )
-
-                # 5. Record AuditLog for this warehouse GRV
-                await tx_repo.create_audit_log(
-                    actor_user_id=parsed_user_id,
-                    action="IMPORT",
-                    entity_type="initial_stock",
-                    entity_id=str(tx_id),
-                    before_state=None,
-                    after_state={
-                        "transaction_number": tx_number,
-                        "transaction_type": "GRV",
-                        "status": "POSTED",
-                        "warehouse_id": str(warehouse_id),
-                        "lines_count": len(lines),
-                        "total_quantity": str(sum(l.quantity for l in lines)),
-                    },
-                    change_summary=(
-                        f"Imported initial stock opening balance for warehouse {warehouse_id} "
-                        f"({len(lines)} item lines) via batch {batch.batch_number}."
-                    ),
-                    reason=f"Initial stock import batch {batch.batch_number}",
+                    for r in rows
+                ]
+                ob_payload = OpeningBalanceCreate(
+                    warehouse_id=wh_uuid,
+                    project_id=proj_uuid,
+                    transaction_date=today_date,
+                    remarks=f"Initial stock import batch {batch.batch_number}",
+                    lines=ob_lines,
                 )
-                created_transactions.append(transaction)
+                tx = await self.tx_service.create_and_post_opening_balance(
+                    user_id=parsed_user_id,
+                    payload=ob_payload,
+                    commit_session=False,
+                )
+                created_transactions.append(tx)
 
-            # 6. Update batch status
             batch.status = "COMPLETED"
             batch.completed_at = now_utc
             await self.repo.update_batch(batch)
 
-            # 7. AuditLog for batch completion
             await self.repo.create_audit_log(
                 actor_user_id=parsed_user_id,
                 action="IMPORT",
@@ -1057,10 +1070,6 @@ class ImportService:
         except Exception:
             await self.session.rollback()
             raise
-
-    # -----------------------------------------------------------------------
-    # Internal Spreadsheet Row Parsers
-    # -----------------------------------------------------------------------
 
     def _parse_csv_rows(self, file_bytes: bytes) -> List[Tuple[int, Dict[str, Any]]]:
         """Parses rows from CSV bytes, returning (row_number, row_dict)."""
@@ -1316,6 +1325,16 @@ class ImportService:
                 "description",
             ):
                 mapping["remarks"] = idx
+            elif name in (
+                "unit price",
+                "unit_price",
+                "price",
+                "unit cost",
+                "unit_cost",
+                "cost",
+                "rate",
+            ):
+                mapping["unit_price"] = idx
 
         return mapping
 
@@ -1338,6 +1357,12 @@ class ImportService:
             "item_code": get_val("item_code"),
             "quantity": get_val("quantity"),
             "unit": get_val("unit"),
+            "unit_price": get_val("unit_price"),
             "project_code": get_val("project_code"),
             "remarks": get_val("remarks"),
         }
+
+    async def list_initial_stock_batches(self) -> List[ImportBatch]:
+        """Lists all INITIAL_STOCK import batches ordered by creation date descending."""
+        return await self.repo.list_initial_stock_batches()
+

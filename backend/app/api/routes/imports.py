@@ -1,8 +1,9 @@
+from datetime import date
+from typing import Any, Dict, List, Optional
 # backend/app/api/routes/imports.py
-from typing import Any, Dict
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -184,6 +185,25 @@ async def upload_initial_stock_file(
 
 
 @router.get(
+    "/initial-stock/batches",
+    response_model=List[ImportBatchRead],
+    summary="List all initial stock import batches",
+)
+@router.get(
+    "/initial-stock/batches/",
+    response_model=List[ImportBatchRead],
+    include_in_schema=False,
+)
+async def list_initial_stock_batches(
+    current_user: AuthenticatedUser = Depends(
+        require_roles("ADMIN", "INVENTORY_MANAGER", "STORE_KEEPER")
+    ),
+    service: ImportService = Depends(get_import_service),
+):
+    batches = await service.list_initial_stock_batches()
+    return [ImportBatchRead.model_validate(b) for b in batches]
+
+@router.get(
     "/initial-stock/{batch_id}",
     response_model=InitialStockBatchPreview,
     summary="Get initial stock import batch status, errors, and preview of staged rows",
@@ -223,3 +243,56 @@ async def commit_initial_stock_batch(
         user_id=user_id,
         batch_id=batch_id,
     )
+
+@router.post(
+    "/initial-stock/stage",
+    response_model=ImportBatchRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Stage, validate, and preview Initial Stock spreadsheet with 4-column support",
+)
+@router.post(
+    "/initial-stock/stage/",
+    response_model=ImportBatchRead,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+async def stage_initial_stock_file(
+    file: UploadFile = File(..., description="Spreadsheet file (.xlsx or .csv)"),
+    warehouse_id: Optional[uuid.UUID] = Form(None),
+    project_id: Optional[uuid.UUID] = Form(None),
+    transaction_date: Optional[date] = Form(None),
+    remarks: Optional[str] = Form(None),
+    x_warehouse_id: Optional[uuid.UUID] = Header(None, alias="warehouse_id"),
+    current_user: AuthenticatedUser = Depends(
+        require_roles("ADMIN", "INVENTORY_MANAGER")
+    ),
+    service: ImportService = Depends(get_import_service),
+):
+    user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded file is empty.",
+        )
+    effective_wh_id = warehouse_id or x_warehouse_id
+    try:
+        batch = await service.stage_initial_stock_file(
+            user_id=user_id,
+            file_name=file.filename or "initial_stock.xlsx",
+            file_bytes=file_bytes,
+            warehouse_id=effective_wh_id,
+            project_id=project_id,
+            transaction_date=transaction_date,
+            remarks=remarks,
+        )
+    except TypeError:
+        batch = await service.stage_initial_stock_file(
+            user_id=user_id,
+            file_name=file.filename or "initial_stock.xlsx",
+            file_bytes=file_bytes,
+        )
+    return batch
+
+
+

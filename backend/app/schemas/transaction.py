@@ -4,13 +4,14 @@ from decimal import Decimal
 from typing import List, Literal, Optional
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 class TransactionLineCreate(BaseModel):
     item_id: uuid.UUID
     quantity: Decimal = Field(..., gt=0, description="Quantity must be strictly positive")
     unit: str = Field(..., min_length=1, max_length=50, description="Unit of measurement")
+    unit_price: Optional[Decimal] = Field(None, ge=0, description="Unit price / cost (>= 0)")
     remarks: Optional[str] = None
 
 
@@ -178,7 +179,15 @@ class TransactionLineRead(BaseModel):
     item_id: uuid.UUID
     quantity: Decimal
     unit: str
+    unit_price: Optional[Decimal] = None
     remarks: Optional[str] = None
+
+    @computed_field
+    @property
+    def total_price(self) -> Optional[Decimal]:
+        if self.unit_price is not None:
+            return (self.quantity * self.unit_price).quantize(Decimal("0.0001"))
+        return None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -246,3 +255,27 @@ class TransferRecordRead(BaseModel):
     lines: List[TransferLineRead] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class OpeningBalanceLineCreate(BaseModel):
+    item_id: uuid.UUID
+    quantity: Decimal = Field(..., gt=0, description="Quantity must be strictly positive")
+    unit: Optional[str] = Field(None, max_length=50, description="Unit of measurement; fallback to item default_unit if empty")
+    unit_price: Optional[Decimal] = Field(None, ge=0, description="Unit price / cost (>= 0)")
+    remarks: Optional[str] = None
+
+
+class OpeningBalanceCreate(BaseModel):
+    warehouse_id: uuid.UUID
+    project_id: Optional[uuid.UUID] = None
+    transaction_date: date = Field(default_factory=date.today)
+    remarks: Optional[str] = None
+    lines: List[OpeningBalanceLineCreate] = Field(..., min_length=1, description="At least one line required")
+
+    @field_validator("lines")
+    @classmethod
+    def validate_unique_items(cls, lines: List[OpeningBalanceLineCreate]) -> List[OpeningBalanceLineCreate]:
+        item_ids = [line.item_id for line in lines]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("Duplicate item in transaction lines is not allowed (ADR-006).")
+        return lines

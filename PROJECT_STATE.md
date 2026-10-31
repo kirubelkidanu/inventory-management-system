@@ -399,3 +399,39 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
    - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,700 modules transformed in 1.82s).
    - Re-packed production distribution: `frontend/frontend-dist.tar.gz` (182 KB).
    - Mirrored changes cleanly to `C:\dev\inventory-management-system` and pushed commit `cda84cc` to GitHub `origin main`.
+
+
+---
+
+## 2026-10-31 — Opening Balance (Initial Stock) Feature & 4-Column Excel Import with Unit Price Valuation
+
+### 1. Database Migration & ORM Models
+- **Migration 004**: Executed `database/migrations/004_add_unit_price_support.sql` adding `unit_price NUMERIC(15, 4) NULL CHECK (unit_price >= 0)` to `transaction_lines`.
+- **ORM & Pydantic**: Updated `TransactionLine` model in `backend/app/models/transaction.py` and schemas in `backend/app/schemas/transaction.py` with optional `unit_price` and computed `total_price`. Added `OpeningBalanceLineCreate` and `OpeningBalanceCreate` schemas.
+
+### 2. Backend Opening Balance Service & 4-Column Staging
+- **Staging Service**: Implemented flexible 4-column staging (`inventory id`, `quantity`, `unit measurment`, `unit price`) in `backend/app/services/import_.py` via `POST /api/v1/imports/initial-stock/stage`.
+  * Flexible header recognition across common variations.
+  * Defaults blank UOM to item default unit in `items`.
+  * Defaults blank `unit_price` to `0.0000`.
+  * Detects and surfaces in-file duplicates (`DUPLICATE_IN_FILE`) and pre-existing warehouse balances (`ALREADY_EXISTS`).
+- **Atomic Opening Balance Posting**: Built `create_and_post_opening_balance` in `backend/app/services/transaction.py` for both batch commit (`POST /api/v1/imports/initial-stock/{batch_id}/commit`) and manual submission (`POST /api/v1/transactions/opening-balance`).
+  * Enforces atomic single-transaction execution per ADR-001, ADR-002, ADR-003, ADR-006, and ADR-009.
+  * Header semantics: `transaction_type = 'ADJUSTMENT'`, `adjustment_reason = 'Opening Balance'`, `external_reference = 'OPENING_BALANCE'`.
+  * Row locking: `SELECT ... FOR UPDATE` on `inventory_balances`.
+  * Dual-write: updates `inventory_balances.quantity_on_hand` and appends immutable `stock_movements` (`movement_type = 'IN'`) with running balance calculation.
+  * Emits `audit_logs` entry with `TRANSACTION_POSTED`.
+
+### 3. Frontend Opening Balance Page
+- **Route & Navigation**: Registered `/opening-balance` in `frontend/src/App.tsx` and added Opening Balance navigation link to `frontend/src/layouts/AppLayout.tsx` under INVENTORY & CATALOG.
+- **Enterprise UI**: Built `frontend/src/features/inventory/OpeningBalancePage.tsx` with three tabs:
+  * **Bulk Excel Import**: Target Warehouse selector, Effective Date, Excel template download, drag-and-drop file upload, staged preview metrics (Total Rows, Valid Rows, Skipped/Issues, Total Valuation), validation issues drawer, and Confirm and Post Opening Balance action.
+  * **Manual Entry Form**: Warehouse/date selectors, dynamic line items with Item selector, unit price, quantity, real-time total price calculation, and direct posting.
+  * **History**: View historical initial stock batches and posted opening balance transaction vouchers.
+
+### 4. Verification & Quality Gates
+- **Backend Tests**: `pytest backend/tests` passes 100% (**227 passed in 2.71s** across 16 test modules).
+- **Ledger Invariant**: `vw_reconciliation_discrepancies` verified at 0 discrepancies on live Supabase PostgreSQL.
+- **Frontend Build**: `npm.cmd run build` passes with 0 TypeScript/bundler errors (1,701 modules transformed).
+- **Security Check**: Verified 0 secrets exposed in frontend code (AGENTS.md Rule 6).
+- **Deployment Packaging**: Packaged `frontend/frontend-dist.tar.gz` (188 KB) for cPanel deployment.

@@ -6,6 +6,7 @@ import {
   Boxes,
   LayoutDashboard,
   PackageCheck,
+  PackagePlus,
   Tags,
   ClipboardList,
   ArrowDownToLine,
@@ -48,6 +49,7 @@ const navigationSections: NavSection[] = [
     section: 'Inventory & Catalog',
     items: [
       { name: 'Inventory Balances', href: '/inventory', icon: PackageCheck },
+      { name: 'Opening Balance', href: '/opening-balance', icon: PackagePlus },
       { name: 'Item Master', href: '/items', icon: Tags },
     ],
   },

@@ -101,3 +101,25 @@ Supabase Row Level Security is currently disabled.
 RLS/security policy implementation will be addressed deliberately during the authentication and authorization phase.
 
 Do not enable RLS automatically without reviewing the application authorization architecture first.
+
+
+---
+
+## ADR-009 — Opening Balance and Unit Price Valuation Support
+
+Status: APPROVED
+
+1. Transaction Lines Valuation:
+   - `transaction_lines.unit_price` is tracked as `NUMERIC(15, 4) NULL CHECK (unit_price >= 0)`.
+   - Line total price is computed as `quantity * unit_price`.
+
+2. 4-Column Initial Stock Ingestion:
+   - Initial stock staging supports 4-column sheets (`inventory id`, `quantity`, `unit measurment`, `unit price`).
+   - Blank unit of measurement falls back to the item's configured `default_unit`.
+   - Blank or omitted `unit_price` defaults to `0.0000`.
+   - Staging surfaces explicit duplicates (`DUPLICATE_IN_FILE`) and existing warehouse stock (`ALREADY_EXISTS`) so clean items can be committed safely without duplicate stock creation.
+
+3. Transaction Ledger Semantics:
+   - Opening balances are posted through `TransactionService.create_and_post_opening_balance` under single atomic PostgreSQL transactions.
+   - Headers use `transaction_type = 'ADJUSTMENT'`, `adjustment_reason = 'Opening Balance'`, and `external_reference = 'OPENING_BALANCE'`.
+   - Inventory quantities update `inventory_balances` with row-level locks (`SELECT FOR UPDATE`) and append immutable `IN` records to `stock_movements`.
