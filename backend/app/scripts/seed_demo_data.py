@@ -70,11 +70,22 @@ DEMO_USERS = [
     },
 ]
 
-# Standard Categories from docs/PROJECT_SPEC.md
+# Standard Categories from docs/PROJECT_SPEC.md Section 2
 SEED_CATEGORIES = [
     {"code": "01", "name": "CEMENT", "description": "Cement & Binding Materials"},
     {"code": "02", "name": "STEEL", "description": "Reinforcement & Structural Steel"},
+    {"code": "03", "name": "QURRY", "description": "Quarry Materials, Sand & Aggregates"},
+    {"code": "04", "name": "LAND SCAPE", "description": "Landscape & Gardening Materials"},
+    {"code": "05", "name": "Tiles", "description": "Floor & Wall Ceramic/Porcelain Tiles"},
+    {"code": "06", "name": "WOOD,P,GGG", "description": "Wood, Timber, Plywood & Glass"},
     {"code": "07", "name": "PAINT AND CHEMICAL", "description": "Paints, Primers & Chemical Products"},
+    {"code": "08", "name": "SANIT", "description": "Sanitary Ware & Plumbing Materials"},
+    {"code": "09", "name": "ELECTRIC", "description": "Electrical Cables, Switches & Fixtures"},
+    {"code": "10", "name": "safety&security", "description": "Safety Gear & Security Equipment"},
+    {"code": "11", "name": "OTHER", "description": "General Miscellaneous Inventory"},
+    {"code": "12", "name": "FL", "description": "Fuel & Lubricants"},
+    {"code": "13", "name": "TB", "description": "Tyres & Batteries"},
+    {"code": "14", "name": "SPARE PART", "description": "Vehicle & Heavy Machinery Spare Parts"},
 ]
 
 # Master Catalog Items

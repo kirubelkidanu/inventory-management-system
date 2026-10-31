@@ -323,3 +323,35 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
    - Backend tests: `pytest backend/tests/test_imports.py` (24 passed) and full test suite `pytest backend/tests` (217 passed, 0 failed in 3.64s).
    - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,697 modules transformed in 2.13s).
    - Generated updated `frontend/frontend-dist.tar.gz` (181 KB) containing flat root distribution for cPanel deployment.
+
+## Partial Catalog Ingestion & Steel UOM Defaulting (2026-10-31)
+
+### What Was Fixed & Implemented
+1. **Corrupt/Draft Row Filtering (docs/PROJECT_SPEC.md Section 18 Note 4)**:
+   - In `backend/app/services/import_.py`: Added filter during row iteration so that any row with empty description and empty unit (e.g., trailing anomaly `07-PC-D0159` in `PAINT AND CHEMICAL`) is automatically dropped as an empty/draft row without logging fatal validation errors.
+
+2. **Steel UOM Auto-Defaulting (docs/PROJECT_SPEC.md Section 18 Note 1)**:
+   - In `backend/app/services/import_.py`: Implemented auto-assignment of unit measurement `PCS` whenever `default_unit` is blank and the item's code starts with `02-ST-` or category is `STEEL` (or variations `02`, `02-ST`). This resolves the blank UOM issue across all 569 items in sheet `STEEL`.
+
+3. **Graceful Handling of Existing Catalog Items**:
+   - In `backend/app/services/import_.py` (`stage_item_master_file`): When an item code already exists in the catalog database, it is recorded with `error_code="ALREADY_EXISTS"` and skipped from `valid_items` and `staged_data["items"]`. It no longer prevents new items from being staged or committed.
+   - Batch status is marked `VALIDATED` if all errors are non-fatal `ALREADY_EXISTS` skipped records and `valid_rows > 0`.
+
+4. **Idempotent Atomic Catalog Commit**:
+   - In `backend/app/services/import_.py` (`commit_item_master_import`): Queries the database for existing codes immediately before insert and filters them out. Rather than throwing HTTP 400 on collision, only genuinely new items are inserted into `items`, guaranteeing absolute idempotency.
+   - Created alias `commit_item_master_batch = commit_item_master_import`.
+
+5. **Frontend Modal UI & Metric Upgrades**:
+   - In `frontend/src/features/inventory/components/ImportItemsModal.tsx`:
+     - Added dedicated metric card for `Already in Catalog` (Amber, skipped from insert) alongside `New Valid SKUs` (Emerald, ready to commit), `Total Rows`, and `Validation Errors` (Rose, fatal errors).
+     - Enhanced status banners to explain partial ingestion readiness and item counts.
+     - Activated "Confirm & Commit {valid_rows} New Items" button whenever `valid_rows > 0`.
+     - Added `ALREADY_EXISTS` amber badge styling in the validation issues table.
+
+6. **Standard Categories Seeding**:
+   - Expanded `SEED_CATEGORIES` in `backend/app/scripts/seed_demo_data.py` to include all 14 standard categories from `docs/PROJECT_SPEC.md` Section 2 (`01` through `14`). Executed script against live Supabase database, successfully verifying 14 active categories with 0 reconciliation discrepancies.
+
+7. **Quality Gates & Tests**:
+   - Backend tests: `pytest backend/tests/test_imports.py` (27 passed) and full test suite `pytest backend/tests` (220 passed, 0 failed in 2.99s).
+   - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,697 modules transformed in 2.24s).
+   - Re-packed production distribution: `frontend/frontend-dist.tar.gz` (182 KB).

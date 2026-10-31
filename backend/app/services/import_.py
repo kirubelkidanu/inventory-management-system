@@ -109,6 +109,34 @@ class ImportService:
                         fast_category_lookup.setdefault(p, cat)
                         fast_category_lookup.setdefault(p.replace(" ", ""), cat)
 
+        # Standard category code/prefix mappings from docs/PROJECT_SPEC.md Section 2
+        STANDARD_PREFIX_TO_CODE = {
+            "01-CM": "01",
+            "02-ST": "02",
+            "03-QR": "03",
+            "04-GL": "04",
+            "05-TL": "05",
+            "06-WD": "06",
+            "07-PC": "07",
+            "08-SN": "08",
+            "09-EL": "09",
+            "10-SF": "10",
+            "11-OT": "11",
+            "12-FL": "12",
+            "13-TB": "13",
+            "14-TY": "14",
+            "14-SN": "14",
+            "14-IZ": "14",
+            "14-XL": "14",
+            "14-BL": "14",
+            "14-ER": "14",
+            "14-HT": "14",
+            "14-CG": "14",
+        }
+        for prefix, cat_code in STANDARD_PREFIX_TO_CODE.items():
+            if cat_code in fast_category_lookup:
+                fast_category_lookup.setdefault(prefix, fast_category_lookup[cat_code])
+
         candidate_item_codes = list({
             str(data.get("item_code", "")).strip()
             for _, data in raw_rows
@@ -140,11 +168,28 @@ class ImportService:
             raw_unit = row_data.get("default_unit")
             default_unit = str(raw_unit).strip() if raw_unit is not None else ""
 
-            # Drop trailing empty draft rows that have no description and no unit (e.g. 07-PC-D0159)
+            # 1. Corrupt/Draft Row Filter:
+            # If a row has an empty description and empty unit (e.g. 07-PC-D0159), treat as empty/draft row and skip without error
             if not description and not default_unit:
                 continue
 
-            # Validate item_code
+            # 2. Steel UOM Defaulting (docs/PROJECT_SPEC.md Section 18 Note 1):
+            # If unit measurement is blank/empty, and item code starts with '02-ST-' or category is 'STEEL', assign default 'PCS'
+            if not default_unit:
+                cat_upper = category_str.strip().upper()
+                main_upper = str(row_data.get("main_category", "")).strip().upper()
+                sub_upper = str(row_data.get("sub_category", "")).strip().upper()
+                if (
+                    item_code.startswith("02-ST-")
+                    or cat_upper == "STEEL"
+                    or cat_upper.startswith("02-ST")
+                    or cat_upper == "02"
+                    or main_upper == "STEEL"
+                    or sub_upper == "STEEL"
+                ):
+                    default_unit = "PCS"
+
+            # 3. Validate item_code & Existing Catalog Items (DUPLICATE_CODE vs ALREADY_EXISTS)
             if not item_code:
                 import_errors.append(
                     ImportError(
@@ -174,6 +219,7 @@ class ImportService:
                 )
                 row_has_error = True
             elif item_code in existing_db_codes:
+                # Mark as ALREADY_EXISTS and skip from staged insert list (do not break entire batch)
                 import_errors.append(
                     ImportError(
                         id=uuid.uuid4(),
@@ -181,16 +227,17 @@ class ImportService:
                         row_number=row_number,
                         column_name="item_code",
                         raw_value=item_code,
-                        error_code="DUPLICATE_CODE",
-                        error_message=f"Item code already exists in catalog: '{item_code}'.",
+                        error_code="ALREADY_EXISTS",
+                        error_message=f"Item code already exists in catalog: '{item_code}'. Skipped.",
                         created_at=now_utc,
                     )
                 )
                 row_has_error = True
+                seen_file_item_codes.add(item_code)
             else:
                 seen_file_item_codes.add(item_code)
 
-            # Validate description (catches corrupt draft rows such as 07-PC-D0159)
+            # 4. Validate description
             if not description:
                 import_errors.append(
                     ImportError(
@@ -206,13 +253,19 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # Validate category across category_str, sub_category, and main_category using in-memory cache
+            # 5. Validate category across category_str, sub_category, main_category, and item_code prefix
             matched_category: Optional[Category] = None
             category_candidates = [
                 category_str,
                 str(row_data.get("sub_category", "")).strip(),
                 str(row_data.get("main_category", "")).strip(),
             ]
+            if item_code and "-" in item_code:
+                parts = item_code.split("-")
+                category_candidates.append(parts[0])
+                if len(parts) >= 2:
+                    category_candidates.append(f"{parts[0]}-{parts[1]}")
+
             for cat_cand in category_candidates:
                 if not cat_cand:
                     continue
@@ -250,7 +303,7 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # Validate default_unit
+            # 6. Validate default_unit
             if not default_unit:
                 import_errors.append(
                     ImportError(
@@ -266,7 +319,7 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # If row valid, record staged item
+            # If row valid, record staged item (only genuinely new items that pass validation)
             if not row_has_error and matched_category is not None:
                 valid_items.append(
                     {
@@ -281,10 +334,11 @@ class ImportService:
 
         # 4. Determine batch status and counts
         total_rows = len(raw_rows)
+        fatal_error_rows = len({err.row_number for err in import_errors if err.error_code != "ALREADY_EXISTS"})
         error_rows = len({err.row_number for err in import_errors})
         valid_rows = len(valid_items)
 
-        if error_rows == 0 and valid_rows > 0:
+        if fatal_error_rows == 0 and valid_rows > 0:
             batch_status = "VALIDATED"
         else:
             batch_status = "PARSED"
@@ -399,35 +453,33 @@ class ImportService:
                 detail="No valid items to import in batch.",
             )
 
-        # Check for DB collisions before committing
+        # Check for DB collisions and filter out existing codes to ensure absolute idempotency
         candidate_codes = [item["item_code"] for item in staged_items]
         existing_codes = await self.repo.get_existing_item_codes(candidate_codes)
-        if existing_codes:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Cannot commit: {len(existing_codes)} item code(s) already exist in catalog "
-                    f"(e.g. {list(existing_codes)[:5]})."
-                ),
-            )
+        items_to_insert = [
+            item for item in staged_items if item["item_code"] not in existing_codes
+        ]
 
         now_utc = datetime.now(timezone.utc)
         try:
-            # 1. Create items
-            items_to_create = [
-                Item(
-                    id=uuid.uuid4(),
-                    item_code=item["item_code"],
-                    description=item["description"],
-                    category_id=_to_uuid(item["category_id"]),
-                    default_unit=item["default_unit"],
-                    is_active=True,
-                )
-                for item in staged_items
-            ]
-            await self.repo.bulk_create_items(items_to_create)
+            # 1. Create items (if any new items remain)
+            if items_to_insert:
+                items_to_create = [
+                    Item(
+                        id=uuid.uuid4(),
+                        item_code=item["item_code"],
+                        description=item["description"],
+                        category_id=_to_uuid(item["category_id"]),
+                        default_unit=item["default_unit"],
+                        is_active=True,
+                    )
+                    for item in items_to_insert
+                ]
+                await self.repo.bulk_create_items(items_to_create)
+            else:
+                items_to_create = []
 
-            # 2. Update batch
+            # 2. Update batch status to COMPLETED
             batch.status = "COMPLETED"
             batch.completed_at = now_utc
             await self.repo.update_batch(batch)
@@ -442,17 +494,23 @@ class ImportService:
                 after_state={
                     "batch_number": batch.batch_number,
                     "imported_count": len(items_to_create),
+                    "skipped_existing_count": len(existing_codes),
                 },
                 change_summary=(
-                    f"Imported {len(items_to_create)} items into item master catalog "
-                    f"from batch {batch.batch_number}."
+                    f"Imported {len(items_to_create)} new items into item master catalog "
+                    f"from batch {batch.batch_number} ({len(existing_codes)} existing items skipped)."
                 ),
                 reason="Item Master Excel Import Commit",
             )
 
             await self.session.commit()
             return {
-                "message": "Item master import completed successfully.",
+                "message": (
+                    f"Successfully committed {len(items_to_create)} new items to catalog"
+                    f" ({len(existing_codes)} existing items skipped)."
+                    if existing_codes
+                    else f"Successfully committed {len(items_to_create)} new items to catalog."
+                ),
                 "batch_id": batch.id,
                 "batch_number": batch.batch_number,
                 "imported_count": len(items_to_create),
@@ -460,6 +518,9 @@ class ImportService:
         except Exception:
             await self.session.rollback()
             raise
+
+    # Method alias for backward compatibility with batch naming
+    commit_item_master_batch = commit_item_master_import
 
     async def stage_initial_stock_file(
         self,

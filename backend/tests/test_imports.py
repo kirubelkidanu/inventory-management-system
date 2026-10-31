@@ -261,7 +261,7 @@ async def test_stage_catches_existing_catalog_code():
     assert batch.error_rows == 1
     service.repo.create_errors.assert_called_once()
     errors = service.repo.create_errors.call_args[0][0]
-    assert errors[0].error_code == "DUPLICATE_CODE"
+    assert errors[0].error_code == "ALREADY_EXISTS"
     assert "already exists in catalog" in errors[0].error_message
 
 
@@ -297,6 +297,69 @@ async def test_stage_catches_missing_description_and_corrupt_draft_row():
 
 
 @pytest.mark.asyncio
+async def test_stage_skips_corrupt_draft_row_with_empty_description_and_unit():
+    """Confirms empty draft rows (like 07-PC-D0159 in docs/PROJECT_SPEC.md Note 4) are dropped without errors."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    cat = Category(id=uuid4(), code="07-PC", name="PAINT AND CHEMICAL", is_active=True)
+    service.repo.get_all_categories = AsyncMock(return_value={"PAINT AND CHEMICAL": cat})
+    service.repo.get_existing_item_codes = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    excel_data = {
+        "PAINT AND CHEMICAL": [
+            ["Item Code", "Description", "Category", "Unit"],
+            ["07-PC-00001", "Red Oxide Primer", "PAINT AND CHEMICAL", "LTR"],
+            ["07-PC-D0159", "", "PAINT AND CHEMICAL", ""],  # corrupt draft row with no desc & no uom
+        ]
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_item_master_file(
+        user_id=uuid4(), file_name="paint.xlsx", file_bytes=file_bytes
+    )
+
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    assert len(batch.staged_data["items"]) == 1
+    assert batch.staged_data["items"][0]["item_code"] == "07-PC-00001"
+
+
+@pytest.mark.asyncio
+async def test_stage_auto_defaults_steel_uom_to_pcs():
+    """Verifies that all items in sheet STEEL or 02-ST-* default blank UOM to 'PCS' (PROJECT_SPEC.md Note 1)."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    steel_cat = Category(id=uuid4(), code="02-ST", name="STEEL", is_active=True)
+    service.repo.get_all_categories = AsyncMock(return_value={"STEEL": steel_cat, "02-ST": steel_cat})
+    service.repo.get_existing_item_codes = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    excel_data = {
+        "STEEL": [
+            ["Item Code", "Description", "Category", "Unit"],
+            ["02-ST-00001", "Reinforcement Bar 12mm High Yield", "STEEL", ""],
+            ["02-ST-00002", "Reinforcement Bar 16mm High Yield", "STEEL", None],
+        ]
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_item_master_file(
+        user_id=uuid4(), file_name="steel.xlsx", file_bytes=file_bytes
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 2
+    assert batch.error_rows == 0
+    assert batch.staged_data["items"][0]["default_unit"] == "PCS"
+    assert batch.staged_data["items"][1]["default_unit"] == "PCS"
+
+
+@pytest.mark.asyncio
 async def test_stage_catches_invalid_category():
     mock_session = AsyncMock()
     service = ImportService(mock_session)
@@ -329,23 +392,23 @@ async def test_stage_catches_missing_uom():
     mock_session = AsyncMock()
     service = ImportService(mock_session)
 
-    cat = Category(id=uuid4(), code="02-ST", name="STEEL", is_active=True)
-    service.repo.get_all_categories = AsyncMock(return_value={"STEEL": cat})
+    cat = Category(id=uuid4(), code="01-CM", name="CEMENT", is_active=True)
+    service.repo.get_all_categories = AsyncMock(return_value={"CEMENT": cat})
     service.repo.get_existing_item_codes = AsyncMock(return_value=set())
     service.repo.create_batch = AsyncMock()
     service.repo.create_errors = AsyncMock()
 
-    # Sheet with blank unit
+    # Sheet with blank unit for non-steel item
     excel_data = {
-        "STEEL": [
+        "CEMENT": [
             ["Item Code", "Description", "Category", "Unit"],
-            ["02-ST-00001", "Steel bar", "STEEL", ""],
+            ["01-CM-00001", "Portland Cement", "CEMENT", ""],
         ]
     }
     file_bytes = make_excel_bytes(excel_data)
 
     batch = await service.stage_item_master_file(
-        user_id=uuid4(), file_name="steel.xlsx", file_bytes=file_bytes
+        user_id=uuid4(), file_name="cement.xlsx", file_bytes=file_bytes
     )
 
     assert batch.valid_rows == 0
@@ -457,6 +520,64 @@ async def test_commit_batch_without_valid_items_fails():
         await service.commit_item_master_import(user_id=uuid4(), batch_id=batch_id)
     assert exc.value.status_code == 400
     assert "no valid items" in exc.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_commit_batch_skips_existing_codes_idempotently():
+    """Confirms commit filters out existing codes without failing and inserts only genuinely new items."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    batch_id = uuid4()
+    cat_id = uuid4()
+    batch = ImportBatch(
+        id=batch_id,
+        batch_number="IMP-ITEM-20260918-0004",
+        import_type="ITEM_MASTER",
+        file_name="items.xlsx",
+        file_size_bytes=100,
+        total_rows=2,
+        valid_rows=2,
+        error_rows=0,
+        status="PARSED",
+        staged_data={
+            "items": [
+                {
+                    "item_code": "01-CM-00001",
+                    "description": "Portland Cement (Already in DB)",
+                    "category_id": str(cat_id),
+                    "default_unit": "BAG",
+                },
+                {
+                    "item_code": "01-CM-00002",
+                    "description": "Rapid Hardening Cement (New)",
+                    "category_id": str(cat_id),
+                    "default_unit": "BAG",
+                },
+            ]
+        },
+        created_by=uuid4(),
+    )
+    service.repo.get_batch_by_id = AsyncMock(return_value=batch)
+    # Simulate 01-CM-00001 already in database
+    service.repo.get_existing_item_codes = AsyncMock(return_value={"01-CM-00001"})
+    service.repo.bulk_create_items = AsyncMock()
+    service.repo.update_batch = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+
+    result = await service.commit_item_master_import(user_id=uuid4(), batch_id=batch_id)
+
+    assert result["imported_count"] == 1
+    assert "1 new items" in result["message"]
+    assert "1 existing items skipped" in result["message"]
+    assert batch.status == "COMPLETED"
+
+    # Verify bulk_create_items was called only with 01-CM-00002
+    service.repo.bulk_create_items.assert_called_once()
+    created_items = service.repo.bulk_create_items.call_args[0][0]
+    assert len(created_items) == 1
+    assert created_items[0].item_code == "01-CM-00002"
+    mock_session.commit.assert_called_once()
 
 
 # ===========================================================================

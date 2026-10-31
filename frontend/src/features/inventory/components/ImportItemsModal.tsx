@@ -10,7 +10,6 @@ import {
   Check,
   Search,
   ArrowRight,
-  FileText,
   Layers,
   AlertCircle,
 } from 'lucide-react'
@@ -92,6 +91,16 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
     return Array.from(codes)
   }, [previewData?.errors])
 
+  const skippedExistingCount = useMemo(() => {
+    if (!previewData?.errors) return 0
+    return previewData.errors.filter((e) => e.error_code === 'ALREADY_EXISTS').length
+  }, [previewData?.errors])
+
+  const fatalErrorsCount = useMemo(() => {
+    if (!previewData?.errors) return 0
+    return previewData.errors.filter((e) => e.error_code !== 'ALREADY_EXISTS').length
+  }, [previewData?.errors])
+
   const filteredErrors = useMemo(() => {
     if (!previewData?.errors) return []
     return previewData.errors.filter((err: ImportErrorItem) => {
@@ -157,8 +166,9 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
     try {
       const data = await stageMutation.mutateAsync(selectedFile)
       setPreviewData(data)
-      // Switch active tab based on error presence
-      if (data.errors && data.errors.length > 0) {
+      // Switch active tab based on fatal error presence
+      const hasFatalErrors = data.errors?.some((e) => e.error_code !== 'ALREADY_EXISTS')
+      if (hasFatalErrors) {
         setActiveTab('errors')
       } else {
         setActiveTab('items')
@@ -206,13 +216,17 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
 
   const getErrorCodeBadgeColor = (code: string) => {
     switch (code) {
-      case 'UNKNOWN_CATEGORY':
+      case 'ALREADY_EXISTS':
         return 'bg-amber-100 text-amber-800 border-amber-300'
+      case 'UNKNOWN_CATEGORY':
+      case 'INVALID_CATEGORY':
+        return 'bg-purple-100 text-purple-800 border-purple-300'
       case 'MISSING_CODE':
+      case 'INVALID_CODE':
       case 'MISSING_DESCRIPTION':
         return 'bg-rose-100 text-rose-800 border-rose-300'
       case 'MISSING_UOM':
-        return 'bg-purple-100 text-purple-800 border-purple-300'
+        return 'bg-orange-100 text-orange-800 border-orange-300'
       case 'DUPLICATE_CODE':
         return 'bg-red-100 text-red-800 border-red-300'
       default:
@@ -404,7 +418,7 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
 
                 <div className="p-3.5 rounded-xl border border-emerald-200 bg-emerald-50/50">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-emerald-800">Valid Rows</span>
+                    <span className="text-xs font-medium text-emerald-800">New Valid SKUs</span>
                     <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                   </div>
                   <p className="text-xl font-bold text-emerald-900 mt-1">
@@ -415,56 +429,76 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
                   </p>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50/50">
+                <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/50">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-rose-800">Error Rows</span>
-                    <AlertTriangle className="h-4 w-4 text-rose-600" />
+                    <span className="text-xs font-medium text-amber-800">Already in Catalog</span>
+                    <RotateCcw className="h-4 w-4 text-amber-600" />
                   </div>
-                  <p className="text-xl font-bold text-rose-900 mt-1">
-                    {previewData.batch.error_rows.toLocaleString()}
+                  <p className="text-xl font-bold text-amber-900 mt-1">
+                    {skippedExistingCount.toLocaleString()}
                   </p>
-                  <p className="text-[10px] text-rose-700 mt-0.5">
-                    {previewData.batch.error_rows === 0 ? 'Zero errors' : 'Will be skipped'}
+                  <p className="text-[10px] text-amber-700 mt-0.5">
+                    Skipped from insert
                   </p>
                 </div>
 
-                <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
+                <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50/50">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-slate-500">Batch Code</span>
-                    <FileText className="h-4 w-4 text-slate-400" />
+                    <span className="text-xs font-medium text-rose-800">Validation Errors</span>
+                    <AlertTriangle className="h-4 w-4 text-rose-600" />
                   </div>
-                  <p className="text-xs font-mono font-bold text-slate-900 mt-2 truncate">
-                    {previewData.batch.batch_number}
+                  <p className="text-xl font-bold text-rose-900 mt-1">
+                    {fatalErrorsCount.toLocaleString()}
                   </p>
-                  <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-100 text-sky-800">
-                    {previewData.batch.status}
-                  </span>
+                  <p className="text-[10px] text-rose-700 mt-0.5">
+                    {fatalErrorsCount === 0 ? 'Zero fatal errors' : 'Excluded from commit'}
+                  </p>
                 </div>
               </div>
 
               {/* Status Banner */}
-              {previewData.batch.error_rows === 0 ? (
-                <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50 flex items-start gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="text-sm font-semibold text-emerald-900">
-                      Spreadsheet Validated Successfully
-                    </h4>
-                    <p className="text-xs text-emerald-700 mt-0.5">
-                      All {previewData.batch.valid_rows} rows passed category matching and SKU code validation. You can safely commit these items into the live catalog.
-                    </p>
+              {previewData.batch.valid_rows > 0 ? (
+                fatalErrorsCount === 0 ? (
+                  <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50 flex items-start gap-3">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-sm font-semibold text-emerald-900">
+                        {skippedExistingCount > 0
+                          ? `Ready to Commit ${previewData.batch.valid_rows.toLocaleString()} New SKUs`
+                          : 'Spreadsheet Validated Successfully'}
+                      </h4>
+                      <p className="text-xs text-emerald-700 mt-0.5">
+                        {skippedExistingCount > 0
+                          ? `${skippedExistingCount.toLocaleString()} items already exist in the catalog and will be skipped. ${previewData.batch.valid_rows.toLocaleString()} new items are ready for atomic insertion.`
+                          : `All ${previewData.batch.valid_rows.toLocaleString()} items passed validation. You can safely commit these items into the live catalog.`}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-4 rounded-xl border border-amber-200 bg-amber-50 flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-sm font-semibold text-amber-900">
+                        Partial Ingestion Ready ({previewData.batch.valid_rows.toLocaleString()} New SKUs)
+                      </h4>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        {fatalErrorsCount.toLocaleString()} invalid rows will be excluded
+                        {skippedExistingCount > 0 ? ` and ${skippedExistingCount.toLocaleString()} existing items will be skipped` : ''}.
+                        Click below to commit all {previewData.batch.valid_rows.toLocaleString()} valid new items.
+                      </p>
+                    </div>
+                  </div>
+                )
               ) : (
-                <div className="p-4 rounded-xl border border-amber-200 bg-amber-50 flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="p-4 rounded-xl border border-rose-200 bg-rose-50 flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
                   <div>
-                    <h4 className="text-sm font-semibold text-amber-900">
-                      Validation Issues Detected ({previewData.batch.error_rows} rows)
+                    <h4 className="text-sm font-semibold text-rose-900">
+                      No New Valid Items to Commit
                     </h4>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      Review the table below. Committing will insert all{' '}
-                      <span className="font-bold">{previewData.batch.valid_rows} valid items</span> while excluding invalid rows.
+                    <p className="text-xs text-rose-700 mt-0.5">
+                      All rows were either already in the catalog ({skippedExistingCount.toLocaleString()} skipped)
+                      or had validation errors ({fatalErrorsCount.toLocaleString()} excluded).
                     </p>
                   </div>
                 </div>
@@ -486,7 +520,7 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
                         )}
                       >
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        <span>Validation Errors ({previewData.errors.length})</span>
+                        <span>Validation & Skipped ({previewData.errors.length})</span>
                       </button>
                     )}
                     <button
@@ -500,7 +534,7 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
                       )}
                     >
                       <Check className="h-3.5 w-3.5" />
-                      <span>Valid Items Preview ({previewData.valid_items_sample.length} sample)</span>
+                      <span>New Items Preview ({previewData.valid_items_sample.length} sample)</span>
                     </button>
                   </div>
                 </div>
@@ -740,7 +774,7 @@ export const ImportItemsModal: React.FC<ImportItemsModalProps> = ({
                     <>
                       <Check className="h-4 w-4" />
                       <span>
-                        Confirm & Commit {previewData?.batch.valid_rows.toLocaleString()} Items
+                        Confirm & Commit {previewData?.batch.valid_rows.toLocaleString()} New Items
                       </span>
                     </>
                   )}
