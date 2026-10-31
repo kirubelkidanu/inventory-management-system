@@ -19,6 +19,8 @@ import { AdjustmentPage } from '@/features/transactions/AdjustmentPage'
 import { TrialBalancePage } from '@/features/reports/TrialBalancePage'
 import { InTransitPage } from '@/features/reports/InTransitPage'
 import { ReconciliationPage } from '@/features/reconciliation/ReconciliationPage'
+import { WarehousesPage } from '@/features/sites/WarehousesPage'
+import { ProjectsPage } from '@/features/sites/ProjectsPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -46,6 +48,10 @@ export const App: React.FC = () => {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/inventory" element={<InventoryBalancesPage />} />
                 <Route path="/items" element={<ItemsPage />} />
+
+                {/* Sites & Locations */}
+                <Route path="/warehouses" element={<WarehousesPage />} />
+                <Route path="/projects" element={<ProjectsPage />} />
 
                 {/* Transactions */}
                 <Route path="/transactions" element={<TransactionsListPage />} />

@@ -28,10 +28,11 @@ async def create_warehouse(
 
 @router.get("", response_model=list[WarehouseRead])
 async def list_warehouses(
+    is_active: bool | None = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: WarehouseService = Depends(get_warehouse_service),
 ):
-    warehouses = await service.list_warehouses()
+    warehouses = await service.list_warehouses(is_active=is_active)
     return [WarehouseRead.model_validate(warehouse) for warehouse in warehouses]
 
 

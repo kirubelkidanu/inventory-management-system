@@ -12,8 +12,11 @@ class ProjectRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self) -> list[Project]:
-        result = await self.session.execute(select(Project).order_by(Project.name.asc()))
+    async def list(self, is_active: bool | None = None) -> list[Project]:
+        stmt = select(Project)
+        if is_active is not None:
+            stmt = stmt.where(Project.is_active == is_active)
+        result = await self.session.execute(stmt.order_by(Project.name.asc()))
         return list(result.scalars().all())
 
     async def get_by_id(self, project_id: UUID) -> Project | None:

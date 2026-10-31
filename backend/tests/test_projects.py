@@ -16,7 +16,7 @@ class FakeProjectService:
     def __init__(self):
         self.store: dict[str, Project] = {}
 
-    async def list_projects(self):
+    async def list_projects(self, is_active=None):
         return list(self.store.values())
 
     async def get_project(self, project_id):

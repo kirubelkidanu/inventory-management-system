@@ -13,8 +13,11 @@ class WarehouseRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self) -> list[Warehouse]:
-        result = await self.session.execute(select(Warehouse).order_by(Warehouse.name.asc()))
+    async def list(self, is_active: bool | None = None) -> list[Warehouse]:
+        stmt = select(Warehouse)
+        if is_active is not None:
+            stmt = stmt.where(Warehouse.is_active == is_active)
+        result = await self.session.execute(stmt.order_by(Warehouse.name.asc()))
         return list(result.scalars().all())
 
     async def get_by_id(self, warehouse_id: UUID) -> Warehouse | None:

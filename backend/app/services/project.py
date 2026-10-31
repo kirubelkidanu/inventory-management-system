@@ -15,8 +15,8 @@ class ProjectService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = ProjectRepository(session)
 
-    async def list_projects(self) -> list[Project]:
-        return await self.repository.list()
+    async def list_projects(self, is_active: bool | None = None) -> list[Project]:
+        return await self.repository.list(is_active=is_active)
 
     async def get_project(self, project_id: UUID) -> Project:
         project = await self.repository.get_by_id(project_id)
@@ -81,4 +81,10 @@ class ProjectService:
 
     async def delete_project(self, project_id: UUID) -> None:
         project = await self.get_project(project_id)
-        await self.repository.delete(project)
+        try:
+            await self.repository.delete(project)
+        except IntegrityError:
+            # If historical references exist, soft-deactivate instead of hard-delete
+            await self.repository.session.rollback()
+            project.is_active = False
+            await self.repository.update(project)

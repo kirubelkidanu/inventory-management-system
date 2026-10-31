@@ -28,10 +28,11 @@ async def create_project(
 
 @router.get("", response_model=list[ProjectRead])
 async def list_projects(
+    is_active: bool | None = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: ProjectService = Depends(get_project_service),
 ):
-    projects = await service.list_projects()
+    projects = await service.list_projects(is_active=is_active)
     return [ProjectRead.model_validate(project) for project in projects]
 
 

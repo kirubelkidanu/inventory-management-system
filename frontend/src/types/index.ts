@@ -38,6 +38,7 @@ export interface Project {
   id: string
   code: string
   name: string
+  location?: string | null
   description?: string | null
   is_active: boolean
   created_at?: string

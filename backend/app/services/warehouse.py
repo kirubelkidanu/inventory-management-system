@@ -15,8 +15,8 @@ class WarehouseService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = WarehouseRepository(session)
 
-    async def list_warehouses(self) -> list[Warehouse]:
-        return await self.repository.list()
+    async def list_warehouses(self, is_active: bool | None = None) -> list[Warehouse]:
+        return await self.repository.list(is_active=is_active)
 
     async def get_warehouse(self, warehouse_id: UUID) -> Warehouse:
         warehouse = await self.repository.get_by_id(warehouse_id)
@@ -98,4 +98,10 @@ class WarehouseService:
 
     async def delete_warehouse(self, warehouse_id: UUID) -> None:
         warehouse = await self.get_warehouse(warehouse_id)
-        await self.repository.delete(warehouse)
+        try:
+            await self.repository.delete(warehouse)
+        except IntegrityError:
+            # If historical movements/balances reference warehouse, soft-deactivate instead of hard-delete
+            await self.repository.session.rollback()
+            warehouse.is_active = False
+            await self.repository.update(warehouse)

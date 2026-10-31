@@ -17,7 +17,7 @@ class FakeWarehouseService:
         self.store: dict[str, Warehouse] = {}
         self.valid_project_ids = {uuid4(), uuid4()}
 
-    async def list_warehouses(self):
+    async def list_warehouses(self, is_active=None):
         return list(self.store.values())
 
     async def get_warehouse(self, warehouse_id):

@@ -52,6 +52,13 @@ const navigationSections: NavSection[] = [
     ],
   },
   {
+    section: 'Sites & Locations',
+    items: [
+      { name: 'Warehouse Bins', href: '/warehouses', icon: WarehouseIcon },
+      { name: 'Projects & Sites', href: '/projects', icon: Briefcase },
+    ],
+  },
+  {
     section: 'Transactions',
     items: [
       { name: 'Transactions Ledger', href: '/transactions', icon: ClipboardList },
@@ -221,7 +228,7 @@ export const AppLayout: React.FC = () => {
             <div className="hidden items-center gap-3 sm:flex">
               <div className="flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
                 <WarehouseIcon className="h-3.5 w-3.5 text-slate-500" />
-                <span>Central Logistics WH</span>
+                <span>13 Project Warehouses</span>
               </div>
               <div className="flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
                 <Briefcase className="h-3.5 w-3.5 text-slate-500" />
