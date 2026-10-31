@@ -596,3 +596,60 @@ async def test_api_get_batch_preview_success(token_factory):
     assert "batch" in data
     assert "errors" in data
     assert "valid_items_sample" in data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/v1/imports/items/stage", "/api/v1/imports/items/stage/"])
+async def test_api_stage_items_success_with_and_without_trailing_slash(token_factory, path):
+    fake_service = FakeImportService()
+    app.dependency_overrides[get_import_service] = lambda: fake_service
+    token = token_factory(role="ADMIN")
+
+    csv_data = b"inventory id,description,category,unit measurment\n01-CM-00001,Cement,CEMENT,BAG\n"
+    files = {"file": ("items.csv", csv_data, "text/csv")}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            path,
+            files=files,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert "batch" in data
+    assert "errors" in data
+    assert "valid_items_sample" in data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path_pattern", [
+    "/api/v1/imports/items/{batch_id}/commit",
+    "/api/v1/imports/items/{batch_id}/commit/",
+    "/api/v1/imports/batches/{batch_id}/commit",
+    "/api/v1/imports/batches/{batch_id}/commit/",
+])
+async def test_api_commit_items_all_path_aliases(token_factory, path_pattern):
+    fake_service = FakeImportService()
+    app.dependency_overrides[get_import_service] = lambda: fake_service
+    token = token_factory(role="ADMIN")
+    batch_id = uuid4()
+    path = path_pattern.format(batch_id=batch_id)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            path,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 200
+    data = response.json()
+    assert data["imported_count"] == 1
+    assert "completed successfully" in data["message"].lower()
+

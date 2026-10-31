@@ -29,6 +29,12 @@ async def get_import_service(
     status_code=status.HTTP_201_CREATED,
     summary="Upload and stage Item Master spreadsheet (.xlsx or .csv)",
 )
+@router.post(
+    "/items/upload/",
+    response_model=ImportBatchRead,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
 async def upload_item_master_file(
     file: UploadFile = File(..., description="Spreadsheet file (.xlsx or .csv)"),
     current_user: AuthenticatedUser = Depends(
@@ -55,6 +61,12 @@ async def upload_item_master_file(
     response_model=ImportBatchPreview,
     status_code=status.HTTP_200_OK,
     summary="Stage, validate, and preview Item Master spreadsheet (.xlsx or .csv)",
+)
+@router.post(
+    "/items/stage/",
+    response_model=ImportBatchPreview,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 async def stage_item_master_file(
     file: UploadFile = File(..., description="Spreadsheet file (.xlsx or .csv)"),
@@ -83,6 +95,21 @@ async def stage_item_master_file(
     response_model=ImportBatchPreview,
     summary="Get import batch status, errors, and preview of staged items",
 )
+@router.get(
+    "/batches/{batch_id}/",
+    response_model=ImportBatchPreview,
+    include_in_schema=False,
+)
+@router.get(
+    "/items/{batch_id}",
+    response_model=ImportBatchPreview,
+    summary="Get import batch status, errors, and preview of staged items",
+)
+@router.get(
+    "/items/{batch_id}/",
+    response_model=ImportBatchPreview,
+    include_in_schema=False,
+)
 async def get_batch_preview(
     batch_id: uuid.UUID,
     current_user: AuthenticatedUser = Depends(
@@ -98,8 +125,16 @@ async def get_batch_preview(
     summary="Commit valid staged items from an import batch into the Item Master catalog",
 )
 @router.post(
+    "/batches/{batch_id}/commit/",
+    include_in_schema=False,
+)
+@router.post(
     "/items/{batch_id}/commit",
     summary="Commit valid staged items from an import batch into the Item Master catalog",
+)
+@router.post(
+    "/items/{batch_id}/commit/",
+    include_in_schema=False,
 )
 async def commit_batch(
     batch_id: uuid.UUID,
@@ -120,6 +155,12 @@ async def commit_batch(
     response_model=ImportBatchRead,
     status_code=status.HTTP_201_CREATED,
     summary="Upload and stage Initial Stock spreadsheet (.xlsx or .csv)",
+)
+@router.post(
+    "/initial-stock/upload/",
+    response_model=ImportBatchRead,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
 )
 async def upload_initial_stock_file(
     file: UploadFile = File(..., description="Initial stock spreadsheet (.xlsx or .csv)"),
@@ -147,6 +188,11 @@ async def upload_initial_stock_file(
     response_model=InitialStockBatchPreview,
     summary="Get initial stock import batch status, errors, and preview of staged rows",
 )
+@router.get(
+    "/initial-stock/{batch_id}/",
+    response_model=InitialStockBatchPreview,
+    include_in_schema=False,
+)
 async def get_initial_stock_preview(
     batch_id: uuid.UUID,
     current_user: AuthenticatedUser = Depends(
@@ -160,6 +206,10 @@ async def get_initial_stock_preview(
 @router.post(
     "/initial-stock/{batch_id}/commit",
     summary="Commit valid staged initial stock from an import batch into inventory balances and ledger",
+)
+@router.post(
+    "/initial-stock/{batch_id}/commit/",
+    include_in_schema=False,
 )
 async def commit_initial_stock_batch(
     batch_id: uuid.UUID,

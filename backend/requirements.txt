@@ -1,4 +1,4 @@
-﻿# Backend dependencies
+# Backend dependencies
 # Install: pip install -r requirements.txt
 
 fastapi==0.141.1
@@ -8,6 +8,8 @@ asyncpg==0.31.0
 pydantic-settings==2.15.0
 python-jose[cryptography]==3.5.0
 httpx==0.28.1
+openpyxl>=3.1.2
+python-multipart>=0.0.9
 
 # Testing
 pytest==9.1.1

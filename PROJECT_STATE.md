@@ -284,5 +284,25 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
    - Generated `frontend/frontend-dist.tar.gz` containing the production `dist` bundle via native `tar -czf`.
    - Avoids ClamAV Foxhole ZIP heuristics on cPanel shared hosting and allows direct one-click extraction into `public_html`.
 
+## Production Route Alignment & Render Dependency Fix (2026-10-31)
 
-
+### What Was Fixed & Implemented
+1. **Diagnosis of HTTP 404 on Excel Staging Route**:
+   - Live probe of Render production backend (`https://api-inventory.moderngebeya.com/api/v1/openapi.json`) revealed that `/api/v1/imports/items/stage` was returning HTTP 404 because Render had failed to build/deploy recent commits due to `openpyxl>=3.1.2` and `python-multipart>=0.0.9` missing from `backend/requirements.txt`.
+   - Render had stayed on a previous build that only had `/items/upload` and lacked `/items/stage`.
+
+2. **Backend Route Registration & Trailing Slash Resiliency**:
+   - Added `openpyxl>=3.1.2` and `python-multipart>=0.0.9` back to `backend/requirements.txt` to ensure Render build successfully installs dependencies and starts FastAPI.
+   - Enhanced `backend/app/api/routes/imports.py`:
+     * Added both trailing-slash and non-trailing-slash route handlers for `@router.post("/items/stage")` and `@router.post("/items/stage/")` to prevent any 307/404 redirects or proxy drops.
+     * Added trailing slash handlers for commit endpoints (`/items/{batch_id}/commit`, `/items/{batch_id}/commit/`, `/batches/{batch_id}/commit`, `/batches/{batch_id}/commit/`) and batch preview endpoints (`/batches/{batch_id}`, `/batches/{batch_id}/`, `/items/{batch_id}`, `/items/{batch_id}/`).
+     * Preserved existing `/items/upload` for full backward compatibility.
+
+3. **Frontend Endpoint Verification**:
+   - Confirmed `frontend/src/features/inventory/useInventoryData.ts` `useStageItemMaster` and `useCommitItemMaster` post to `/imports/items/stage` and `/imports/items/{batchId}/commit`, which perfectly aligns with the backend prefix `/api/v1/imports`.
+   - Confirmed `multipart/form-data` file payload is bound to `file: UploadFile = File(...)`.
+
+4. **Quality Gates & Tests**:
+   - Backend tests: `pytest backend/tests/test_imports.py` (24 passed) and full suite `pytest backend/tests` (217 passed, 0 failed in 2.62s).
+   - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,697 modules transformed).
+   - Generated updated `frontend/frontend-dist.tar.gz` (181 KB) containing flat root distribution for cPanel deployment.
