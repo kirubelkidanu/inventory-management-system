@@ -89,12 +89,31 @@ class ImportService:
 
         # 2. Pre-fetch categories and existing item codes
         categories_map = await self.repo.get_all_categories()
+        fast_category_lookup: Dict[str, Category] = {}
+        for key, cat in categories_map.items():
+            if not key:
+                continue
+            k_upper = key.strip().upper()
+            fast_category_lookup[k_upper] = cat
+            fast_category_lookup[k_upper.replace(" ", "")] = cat
+            if " - " in k_upper:
+                for part in k_upper.split(" - "):
+                    p = part.strip()
+                    if p:
+                        fast_category_lookup.setdefault(p, cat)
+                        fast_category_lookup.setdefault(p.replace(" ", ""), cat)
+            elif "-" in k_upper:
+                for part in k_upper.split("-"):
+                    p = part.strip()
+                    if p:
+                        fast_category_lookup.setdefault(p, cat)
+                        fast_category_lookup.setdefault(p.replace(" ", ""), cat)
 
-        candidate_item_codes = [
+        candidate_item_codes = list({
             str(data.get("item_code", "")).strip()
             for _, data in raw_rows
             if data.get("item_code") is not None and str(data.get("item_code", "")).strip()
-        ]
+        })
         existing_db_codes = await self.repo.get_existing_item_codes(candidate_item_codes)
 
         # 3. Row-by-row validation
@@ -187,7 +206,7 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # Validate category across category_str, sub_category, and main_category
+            # Validate category across category_str, sub_category, and main_category using in-memory cache
             matched_category: Optional[Category] = None
             category_candidates = [
                 category_str,
@@ -197,13 +216,20 @@ class ImportService:
             for cat_cand in category_candidates:
                 if not cat_cand:
                     continue
-                cand_clean = cat_cand.upper()
-                matched_category = categories_map.get(cand_clean)
+                cand_clean = cat_cand.strip().upper()
+                matched_category = fast_category_lookup.get(cand_clean) or fast_category_lookup.get(cand_clean.replace(" ", ""))
                 if matched_category is not None:
                     break
                 if " - " in cand_clean:
                     for part in cand_clean.split(" - "):
-                        matched_category = categories_map.get(part.strip())
+                        p = part.strip()
+                        matched_category = fast_category_lookup.get(p) or fast_category_lookup.get(p.replace(" ", ""))
+                        if matched_category is not None:
+                            break
+                elif "-" in cand_clean:
+                    for part in cand_clean.split("-"):
+                        p = part.strip()
+                        matched_category = fast_category_lookup.get(p) or fast_category_lookup.get(p.replace(" ", ""))
                         if matched_category is not None:
                             break
                 if matched_category is not None:
@@ -998,31 +1024,34 @@ class ImportService:
 
     def _parse_excel_rows(self, file_bytes: bytes) -> List[Tuple[int, Dict[str, Any]]]:
         """Parses rows across all worksheets in an Excel workbook."""
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-        rows: List[Tuple[int, Dict[str, Any]]] = []
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+        try:
+            rows: List[Tuple[int, Dict[str, Any]]] = []
 
-        global_row_counter = 1
-        for sheet in wb.worksheets:
-            sheet_title = sheet.title.strip()
-            header_map: Dict[str, int] = {}
+            global_row_counter = 1
+            for sheet in wb.worksheets:
+                sheet_title = sheet.title.strip() if sheet.title else ""
+                header_map: Dict[str, int] = {}
 
-            for row_cells in sheet.iter_rows(values_only=True):
-                global_row_counter += 1
-                if not row_cells or not any(c is not None and str(c).strip() for c in row_cells):
-                    continue
+                for row_cells in sheet.iter_rows(values_only=True):
+                    global_row_counter += 1
+                    if not row_cells or not any(c is not None and str(c).strip() for c in row_cells):
+                        continue
 
-                if not header_map:
-                    header_map = self._detect_headers([str(c) if c is not None else "" for c in row_cells])
-                    continue
+                    if not header_map:
+                        header_map = self._detect_headers([str(c) if c is not None else "" for c in row_cells])
+                        continue
 
-                row_data = self._extract_row_data(row_cells, header_map)
-                # If category column missing or blank in row, fall back to sheet name
-                if not row_data.get("category"):
-                    row_data["category"] = sheet_title
+                    row_data = self._extract_row_data(row_cells, header_map)
+                    # If category column missing or blank in row, fall back to sheet name
+                    if not row_data.get("category"):
+                        row_data["category"] = sheet_title
 
-                rows.append((global_row_counter, row_data))
+                    rows.append((global_row_counter, row_data))
 
-        return rows
+            return rows
+        finally:
+            wb.close()
 
     def _detect_headers(self, header_cells: List[Any]) -> Dict[str, int]:
         """Maps canonical field names to column indices based on header names."""
@@ -1132,30 +1161,33 @@ class ImportService:
         self, file_bytes: bytes
     ) -> List[Tuple[int, Dict[str, Any]]]:
         """Parses initial stock rows across worksheets in an Excel workbook."""
-        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-        rows: List[Tuple[int, Dict[str, Any]]] = []
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+        try:
+            rows: List[Tuple[int, Dict[str, Any]]] = []
 
-        global_row_counter = 1
-        for sheet in wb.worksheets:
-            header_map: Dict[str, int] = {}
+            global_row_counter = 1
+            for sheet in wb.worksheets:
+                header_map: Dict[str, int] = {}
 
-            for row_cells in sheet.iter_rows(values_only=True):
-                global_row_counter += 1
-                if not row_cells or not any(
-                    c is not None and str(c).strip() for c in row_cells
-                ):
-                    continue
+                for row_cells in sheet.iter_rows(values_only=True):
+                    global_row_counter += 1
+                    if not row_cells or not any(
+                        c is not None and str(c).strip() for c in row_cells
+                    ):
+                        continue
 
-                if not header_map:
-                    header_map = self._detect_initial_stock_headers(
-                        [str(c) if c is not None else "" for c in row_cells]
-                    )
-                    continue
+                    if not header_map:
+                        header_map = self._detect_initial_stock_headers(
+                            [str(c) if c is not None else "" for c in row_cells]
+                        )
+                        continue
 
-                row_data = self._extract_initial_stock_row_data(row_cells, header_map)
-                rows.append((global_row_counter, row_data))
+                    row_data = self._extract_initial_stock_row_data(row_cells, header_map)
+                    rows.append((global_row_counter, row_data))
 
-        return rows
+            return rows
+        finally:
+            wb.close()
 
     def _detect_initial_stock_headers(
         self, header_cells: List[Any]

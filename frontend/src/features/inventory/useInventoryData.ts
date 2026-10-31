@@ -173,6 +173,7 @@ export function useStageItemMaster() {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
+          timeout: 120000,
         }
       )
       return response.data
@@ -185,7 +186,11 @@ export function useCommitItemMaster() {
   return useMutation<CommitBatchResponse, Error, string>({
     mutationFn: async (batchId: string) => {
       const response = await api.post<CommitBatchResponse>(
-        `/imports/items/${batchId}/commit`
+        `/imports/items/${batchId}/commit`,
+        null,
+        {
+          timeout: 120000,
+        }
       )
       return response.data
     },

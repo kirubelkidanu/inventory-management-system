@@ -306,3 +306,20 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
    - Backend tests: `pytest backend/tests/test_imports.py` (24 passed) and full suite `pytest backend/tests` (217 passed, 0 failed in 2.62s).
    - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,697 modules transformed).
    - Generated updated `frontend/frontend-dist.tar.gz` (181 KB) containing flat root distribution for cPanel deployment.
+
+## Excel Staging Performance Optimization & Timeout Adjustment (2026-10-31)
+
+### What Was Fixed & Implemented
+1. **Frontend Timeout Extension**:
+   - In `frontend/src/lib/api.ts`: Increased the default Axios client timeout from 30,000ms (30s) to 120,000ms (120s / 2 minutes) to provide plenty of headroom for enterprise multi-sheet file uploads and server-side validation.
+   - In `frontend/src/features/inventory/useInventoryData.ts`: Explicitly configured `{ timeout: 120000 }` in `useStageItemMaster` and `useCommitItemMaster` requests.
+
+2. **Backend Excel Ingestion Optimization**:
+   - In `backend/app/services/import_.py` (`_parse_excel_rows` and `_parse_initial_stock_excel_rows`): Switched `openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)` wrapped in `try...finally: wb.close()`. This eliminates building the full in-memory cell DOM tree and leverages lazy XML stream iteration, drastically reducing memory usage and parsing latency on multi-sheet workbooks.
+   - In `backend/app/services/import_.py` (`stage_item_master_file`): Pre-built an extensive in-memory category lookup dictionary (`fast_category_lookup`) indexed by uppercase codes, uppercase names, and hyphen-delimited token variations, reducing category lookups from nested searches to $O(1)$ constant time per row.
+   - Deduplicated candidate item codes into a unique set before querying existing catalog codes in the database, minimizing SQL query length and index lookup overhead.
+
+3. **Quality Gates & Tests**:
+   - Backend tests: `pytest backend/tests/test_imports.py` (24 passed) and full test suite `pytest backend/tests` (217 passed, 0 failed in 3.64s).
+   - Frontend build: `npm.cmd run build` passed with 0 TypeScript/bundler errors (1,697 modules transformed in 2.13s).
+   - Generated updated `frontend/frontend-dist.tar.gz` (181 KB) containing flat root distribution for cPanel deployment.
