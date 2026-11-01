@@ -20,6 +20,7 @@ export const InventoryBalancesPage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('')
   const [searchInput, setSearchInput] = useState<string>('')
   const [debouncedSearch, setDebouncedSearch] = useState<string>('')
+  const [includeArchived, setIncludeArchived] = useState<boolean>(false)
 
   const { data: warehouses } = useWarehouses()
   const { data: categories } = useCategories()
@@ -33,6 +34,7 @@ export const InventoryBalancesPage: React.FC = () => {
     warehouse_id: selectedWarehouse || undefined,
     category_id: selectedCategory || undefined,
     search: debouncedSearch || undefined,
+    include_inactive_warehouses: includeArchived,
   })
 
   const rawList = balances || []
@@ -163,11 +165,13 @@ export const InventoryBalancesPage: React.FC = () => {
               className="block w-full rounded-lg border border-slate-300 py-2 pl-3 pr-8 text-sm focus:border-sky-500 focus:outline-hidden bg-white"
             >
               <option value="">All Operating Stores</option>
-              {(warehouses || []).map((wh) => (
-                <option key={wh.id} value={wh.id}>
-                  {wh.name} ({wh.code})
-                </option>
-              ))}
+              {(warehouses || [])
+                .filter((wh) => includeArchived || wh.is_active)
+                .map((wh) => (
+                  <option key={wh.id} value={wh.id}>
+                    {wh.name} ({wh.code}){!wh.is_active ? ' [Archived]' : ''}
+                  </option>
+                ))}
             </select>
           </div>
         </div>
@@ -191,7 +195,7 @@ export const InventoryBalancesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Search */}
+        {/* Search & Archived Toggle */}
         <div>
           <label className="block text-xs font-semibold text-slate-600">SKU Code / Description</label>
           <form onSubmit={handleSearchSubmit} className="relative mt-1">
@@ -210,6 +214,17 @@ export const InventoryBalancesPage: React.FC = () => {
               Filter
             </button>
           </form>
+          <div className="mt-2 flex items-center justify-end">
+            <label className="inline-flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none hover:text-slate-800">
+              <input
+                type="checkbox"
+                checked={includeArchived}
+                onChange={(e) => setIncludeArchived(e.target.checked)}
+                className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 h-3.5 w-3.5"
+              />
+              <span>Include archived stores</span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -264,7 +279,14 @@ export const InventoryBalancesPage: React.FC = () => {
                   return (
                     <tr key={`${row.warehouse_id}-${row.item_id}`} className="hover:bg-slate-50/70 transition-colors">
                       <td className="px-5 py-4">
-                        <div className="font-semibold text-slate-900">{row.warehouse_name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-900">{row.warehouse_name}</span>
+                          {row.warehouse_is_active === false && (
+                            <span className="inline-flex items-center rounded-sm bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                              Archived
+                            </span>
+                          )}
+                        </div>
                         <span className="font-mono text-[11px] text-slate-400">
                           {row.warehouse_code}
                         </span>

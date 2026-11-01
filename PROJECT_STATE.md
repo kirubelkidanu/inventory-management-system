@@ -14,6 +14,7 @@ Migrations:
 - database/migrations/001_initial_schema.sql (EXECUTED SUCCESSFULLY)
 - database/migrations/002_expand_audit_log_actions.sql (EXECUTED SUCCESSFULLY)
 - database/migrations/003_seed_official_sites_and_warehouses.sql (EXECUTED SUCCESSFULLY)
+- database/migrations/004_add_unit_price_support.sql (EXECUTED SUCCESSFULLY)
 
 Database foundation & Seeded Data:
 - 14 tables created & 1 view active
@@ -435,3 +436,30 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
 - **Frontend Build**: `npm.cmd run build` passes with 0 TypeScript/bundler errors (1,701 modules transformed).
 - **Security Check**: Verified 0 secrets exposed in frontend code (AGENTS.md Rule 6).
 - **Deployment Packaging**: Packaged `frontend/frontend-dist.tar.gz` (188 KB) for cPanel deployment.
+
+
+---
+
+## 2026-11-01 — Inventory Balances Direct Join Display Fix & Persistent Memory Unified
+
+### 1. Root Cause & Display Resolution
+- **Issue**: The Inventory Balances page was displaying SKU-UNKNOWN and Warehouse WH for balance records because useInventoryBalances relied on a client-side lookup against a paginated /items query (which failed when 5,646 catalog items were imported) and an active-only /warehouses query (which failed to match archived placeholder WH001).
+- **Backend Direct Join Query**:
+  * Rewrote InventoryRepository.list_balances and get_balance_by_item_warehouse in ackend/app/repositories/inventory.py to perform direct SQL joins: inventory_balances JOIN items JOIN warehouses LEFT JOIN categories.
+  * Added joined projection fields to InventoryBalanceRead schema: item_code, item_description, category_name, unit, warehouse_code, warehouse_name, warehouse_is_active, and computed vailable_quantity.
+  * Added include_inactive_warehouses: bool = Query(False) parameter to GET /api/v1/inventory/balances and list_balances. By default, balances for archived/inactive warehouses (warehouse.is_active == false, such as legacy WH001) are excluded unless explicitly filtered by warehouse_id or include_inactive_warehouses=true.
+- **Frontend Direct Rendering**:
+  * Streamlined useInventoryBalances in rontend/src/features/inventory/useInventoryData.ts to directly consume backend response fields without issuing redundant secondary network requests for all catalog items.
+  * Updated InventoryBalancesPage.tsx to render authentic joined fields directly.
+  * Added an Include archived stores toggle and visual [Archived] badge for inactive store balances.
+
+### 2. Persistent Project Memory Reconciled (AGENTS.md Compliance)
+- Unified DECISIONS.md / decisions.md and PROJECT_STATE.md / project_state.md.
+- Documented approved decisions ADR-001 through ADR-009 (including Opening Balance valuation and unit price support).
+- Synchronized codebase and documentation between C:\dev\inventory-management-system and C:\Users\kirub\OneDrive\inventory-management-system.
+
+### 3. Verification & Quality Gates
+- **Backend Tests**: pytest backend/tests passes 100% (**229 passed in 3.65s** across 16 test modules).
+- **Frontend Build**: 
+pm run build passes with 0 TypeScript/bundler errors (1,701 modules transformed in 6.05s).
+- **cPanel Artifact**: Packaged rontend/frontend-dist.tar.gz and copied to C:\Users\kirub\OneDrive\Desktop\OPENING-BALANCE-DIST.tar.gz (192 KB).

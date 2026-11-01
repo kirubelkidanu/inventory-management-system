@@ -617,6 +617,78 @@ def test_get_inventory_balances_collection_by_warehouse_and_item_id(
     ]
 
 
+# --- Verify joined fields (item_code, warehouse_name, etc.) ---
+@patch(
+    "app.dependencies.get_current_user",
+    return_value=mock_get_current_user_authenticated(),
+)
+@patch("app.api.routes.inventory.InventoryService")
+def test_get_inventory_balances_joined_fields_returned(
+    MockInventoryService,
+    mock_db_session,
+):
+    wh_id = uuid.uuid4()
+    itm_id = uuid.uuid4()
+    enriched_balance = InventoryBalanceRead(
+        warehouse_id=wh_id,
+        item_id=itm_id,
+        quantity_on_hand=150.0,
+        quantity_reserved=25.0,
+        available_quantity=125.0,
+        item_code="01-CM-00001",
+        item_description="Portland Cement Grade 42.5N",
+        category_name="CEMENT",
+        unit="BAG",
+        warehouse_code="KZ-WH-001",
+        warehouse_name="Kazanchis Store / Bin 001",
+        warehouse_is_active=True,
+    )
+    mock_instance = MockInventoryService.return_value
+    mock_instance.get_all_balances.return_value = [enriched_balance]
+
+    response = client.get("/api/v1/inventory/balances")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    row = data[0]
+    assert row["item_code"] == "01-CM-00001"
+    assert row["item_description"] == "Portland Cement Grade 42.5N"
+    assert row["category_name"] == "CEMENT"
+    assert row["unit"] == "BAG"
+    assert row["warehouse_code"] == "KZ-WH-001"
+    assert row["warehouse_name"] == "Kazanchis Store / Bin 001"
+    assert row["warehouse_is_active"] is True
+    assert row["quantity_on_hand"] == 150.0
+    assert row["quantity_reserved"] == 25.0
+    assert row["available_quantity"] == 125.0
+
+
+# --- Verify include_inactive_warehouses flag passed to service ---
+@patch(
+    "app.dependencies.get_current_user",
+    return_value=mock_get_current_user_authenticated(),
+)
+@patch("app.api.routes.inventory.InventoryService")
+def test_get_inventory_balances_include_inactive_flag(
+    MockInventoryService,
+    mock_db_session,
+):
+    mock_instance = MockInventoryService.return_value
+    mock_instance.get_all_balances.return_value = []
+
+    response = client.get("/api/v1/inventory/balances?include_inactive_warehouses=true")
+
+    assert response.status_code == 200
+    mock_instance.get_all_balances.assert_called_once_with(
+        warehouse_id=None,
+        item_id=None,
+        category_id=None,
+        search=None,
+        include_inactive_warehouses=True,
+    )
+
+
 # ============================================================
 # GET /api/v1/inventory/balances/{warehouse_id}/{item_id}
 # ============================================================

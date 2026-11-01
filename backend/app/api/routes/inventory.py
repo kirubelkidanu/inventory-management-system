@@ -48,6 +48,9 @@ async def get_inventory_balances(
     item_id: Optional[uuid.UUID] = Query(None, description="Filter by item ID"),
     category_id: Optional[uuid.UUID] = Query(None, description="Filter by category ID"),
     search: Optional[str] = Query(None, description="Search item code or description"),
+    include_inactive_warehouses: bool = Query(
+        False, description="Include archived/inactive warehouse balances"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: Any = Depends(get_current_user_dep),
 ):
@@ -60,6 +63,7 @@ async def get_inventory_balances(
         item_id=item_id,
         category_id=category_id,
         search=search,
+        include_inactive_warehouses=include_inactive_warehouses,
     )
     if inspect.isawaitable(res):
         balances = await res

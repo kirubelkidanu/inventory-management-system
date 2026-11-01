@@ -4,9 +4,11 @@ import uuid
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.category import Category
 from app.models.inventory import InventoryBalance
 from app.models.item import Item
 from app.models.transaction import StockMovement
+from app.models.warehouse import Warehouse
 
 
 class InventoryRepository:
@@ -18,13 +20,34 @@ class InventoryRepository:
         self,
         warehouse_id: uuid.UUID,
         item_id: uuid.UUID,
-    ) -> Optional[InventoryBalance]:
-        stmt = select(InventoryBalance).where(
-            InventoryBalance.warehouse_id == warehouse_id,
-            InventoryBalance.item_id == item_id,
+    ) -> Optional[dict]:
+        stmt = (
+            select(
+                InventoryBalance.id,
+                InventoryBalance.warehouse_id,
+                InventoryBalance.item_id,
+                InventoryBalance.quantity_on_hand,
+                InventoryBalance.quantity_reserved,
+                InventoryBalance.updated_at,
+                Item.item_code.label("item_code"),
+                Item.description.label("item_description"),
+                Item.default_unit.label("unit"),
+                Category.name.label("category_name"),
+                Warehouse.code.label("warehouse_code"),
+                Warehouse.name.label("warehouse_name"),
+                Warehouse.is_active.label("warehouse_is_active"),
+            )
+            .join(Item, InventoryBalance.item_id == Item.id)
+            .join(Warehouse, InventoryBalance.warehouse_id == Warehouse.id)
+            .outerjoin(Category, Item.category_id == Category.id)
+            .where(
+                InventoryBalance.warehouse_id == warehouse_id,
+                InventoryBalance.item_id == item_id,
+            )
         )
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        row = result.mappings().first()
+        return dict(row) if row else None
 
     async def list_balances(
         self,
@@ -32,27 +55,53 @@ class InventoryRepository:
         item_id: Optional[uuid.UUID] = None,
         category_id: Optional[uuid.UUID] = None,
         search: Optional[str] = None,
-    ) -> List[InventoryBalance]:
-        stmt = select(InventoryBalance)
-        if category_id or search:
-            stmt = stmt.join(Item, InventoryBalance.item_id == Item.id)
-            if category_id:
-                stmt = stmt.where(Item.category_id == category_id)
-            if search:
-                search_term = f"%{search}%"
-                stmt = stmt.where(
-                    or_(
-                        Item.item_code.ilike(search_term),
-                        Item.description.ilike(search_term),
-                    )
-                )
+        include_inactive_warehouses: bool = False,
+    ) -> List[dict]:
+        stmt = (
+            select(
+                InventoryBalance.id,
+                InventoryBalance.warehouse_id,
+                InventoryBalance.item_id,
+                InventoryBalance.quantity_on_hand,
+                InventoryBalance.quantity_reserved,
+                InventoryBalance.updated_at,
+                Item.item_code.label("item_code"),
+                Item.description.label("item_description"),
+                Item.default_unit.label("unit"),
+                Category.name.label("category_name"),
+                Warehouse.code.label("warehouse_code"),
+                Warehouse.name.label("warehouse_name"),
+                Warehouse.is_active.label("warehouse_is_active"),
+            )
+            .join(Item, InventoryBalance.item_id == Item.id)
+            .join(Warehouse, InventoryBalance.warehouse_id == Warehouse.id)
+            .outerjoin(Category, Item.category_id == Category.id)
+        )
+
         if warehouse_id:
             stmt = stmt.where(InventoryBalance.warehouse_id == warehouse_id)
+        elif not include_inactive_warehouses:
+            # By default exclude archived/inactive warehouses unless specifically filtered
+            stmt = stmt.where(Warehouse.is_active.is_(True))
+
         if item_id:
             stmt = stmt.where(InventoryBalance.item_id == item_id)
 
+        if category_id:
+            stmt = stmt.where(Item.category_id == category_id)
+
+        if search:
+            search_term = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    Item.item_code.ilike(search_term),
+                    Item.description.ilike(search_term),
+                )
+            )
+
+        stmt = stmt.order_by(Warehouse.name.asc(), Item.item_code.asc())
         result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+        return [dict(row) for row in result.mappings().all()]
 
     async def list_stock_movements(
         self,

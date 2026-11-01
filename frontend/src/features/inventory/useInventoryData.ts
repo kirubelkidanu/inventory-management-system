@@ -27,6 +27,7 @@ export interface BalanceQueryParams {
   category_id?: string
   item_id?: string
   search?: string
+  include_inactive_warehouses?: boolean
   skip?: number
   limit?: number
 }
@@ -39,6 +40,7 @@ export interface EnrichedInventoryBalance extends InventoryBalance {
   unit: string
   warehouse_code: string
   warehouse_name: string
+  warehouse_is_active?: boolean
 }
 
 export function useCategories() {
@@ -95,23 +97,20 @@ export function useItems(params: ItemQueryParams = {}) {
 }
 
 export function useInventoryBalances(params: BalanceQueryParams = {}) {
-  const { warehouse_id, category_id, item_id, search } = params
-  const { data: items } = useQuery<Item[]>({
-    queryKey: ['items', 'all'],
-    queryFn: async () => (await api.get<Item[]>('/items')).data,
-    staleTime: 60 * 1000,
-  })
-  const { data: warehouses } = useWarehouses()
-  const { data: categories } = useCategories()
+  const { warehouse_id, category_id, item_id, search, include_inactive_warehouses } = params
 
   return useQuery<EnrichedInventoryBalance[]>({
-    queryKey: ['inventory-balances', { warehouse_id, category_id, item_id, search }],
+    queryKey: [
+      'inventory-balances',
+      { warehouse_id, category_id, item_id, search, include_inactive_warehouses },
+    ],
     queryFn: async () => {
-      const queryParams: Record<string, string> = {}
+      const queryParams: Record<string, string | boolean> = {}
       if (warehouse_id) queryParams.warehouse_id = warehouse_id
       if (category_id) queryParams.category_id = category_id
       if (item_id) queryParams.item_id = item_id
       if (search) queryParams.search = search
+      if (include_inactive_warehouses) queryParams.include_inactive_warehouses = true
 
       const response = await api.get<InventoryBalance[]>('/inventory/balances', {
         params: queryParams,
@@ -119,28 +118,26 @@ export function useInventoryBalances(params: BalanceQueryParams = {}) {
 
       const rawBalances = response.data || []
 
-      const itemMap = new Map((items || []).map((i) => [i.id, i]))
-      const warehouseMap = new Map((warehouses || []).map((w) => [w.id, w]))
-      const categoryMap = new Map((categories || []).map((c) => [c.id, c.name]))
-
       return rawBalances.map((b) => {
-        const itm = itemMap.get(b.item_id)
-        const wh = warehouseMap.get(b.warehouse_id)
         const onHand = Number(b.quantity_on_hand) || 0
         const reserved = Number(b.quantity_reserved) || 0
+        const available =
+          b.available_quantity !== undefined && b.available_quantity !== null
+            ? Number(b.available_quantity)
+            : onHand - reserved
 
         return {
           ...b,
           quantity_on_hand: onHand,
           quantity_reserved: reserved,
-          available_quantity: onHand - reserved,
-          item_code: itm?.item_code || 'SKU-UNKNOWN',
-          item_description: itm?.description || 'Item Description',
-          category_id: itm?.category_id,
-          category_name: itm?.category_id ? categoryMap.get(itm.category_id) || 'General' : 'General',
-          unit: itm?.default_unit || 'PCS',
-          warehouse_code: wh?.code || 'WH',
-          warehouse_name: wh?.name || 'Warehouse',
+          available_quantity: available,
+          item_code: b.item_code || 'SKU-UNKNOWN',
+          item_description: b.item_description || 'Item Description',
+          category_name: b.category_name || 'General',
+          unit: b.unit || 'PCS',
+          warehouse_code: b.warehouse_code || 'WH',
+          warehouse_name: b.warehouse_name || 'Warehouse',
+          warehouse_is_active: b.warehouse_is_active,
         }
       })
     },

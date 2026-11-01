@@ -37,12 +37,14 @@ class InventoryService:
         item_id: Optional[uuid.UUID] = None,
         category_id: Optional[uuid.UUID] = None,
         search: Optional[str] = None,
+        include_inactive_warehouses: bool = False,
     ) -> List[InventoryBalanceRead]:
         balances = await self.repo.list_balances(
             warehouse_id=warehouse_id,
             item_id=item_id,
             category_id=category_id,
             search=search,
+            include_inactive_warehouses=include_inactive_warehouses,
         )
         return [
             InventoryBalanceRead.model_validate(balance)

@@ -58,15 +58,22 @@ export interface Item {
 }
 
 export interface InventoryBalance {
-  id: string
+  id?: string
   warehouse_id: string
   item_id: string
   quantity_on_hand: number | string
   quantity_reserved: number | string
   available_quantity?: number | string
-  updated_at: string
+  updated_at?: string
   warehouse?: Warehouse
   item?: Item
+  item_code?: string
+  item_description?: string
+  category_name?: string
+  unit?: string
+  warehouse_code?: string
+  warehouse_name?: string
+  warehouse_is_active?: boolean
 }
 
 export interface StockMovement {

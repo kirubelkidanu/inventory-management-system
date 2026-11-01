@@ -2,17 +2,31 @@ from datetime import date, datetime
 from typing import Optional
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class InventoryBalanceBase(BaseModel):
     quantity_on_hand: float
     quantity_reserved: float
+    available_quantity: Optional[float] = None
+
+    @model_validator(mode="after")
+    def compute_available(self) -> "InventoryBalanceBase":
+        if self.available_quantity is None:
+            self.available_quantity = float(self.quantity_on_hand) - float(self.quantity_reserved)
+        return self
 
 
 class InventoryBalanceRead(InventoryBalanceBase):
     warehouse_id: uuid.UUID
     item_id: uuid.UUID
+    item_code: Optional[str] = None
+    item_description: Optional[str] = None
+    category_name: Optional[str] = None
+    unit: Optional[str] = None
+    warehouse_code: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    warehouse_is_active: Optional[bool] = None
 
     model_config = ConfigDict(from_attributes=True)
 
