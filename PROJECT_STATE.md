@@ -445,11 +445,11 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
 ### 1. Root Cause & Display Resolution
 - **Issue**: The Inventory Balances page was displaying SKU-UNKNOWN and Warehouse WH for balance records because useInventoryBalances relied on a client-side lookup against a paginated /items query (which failed when 5,646 catalog items were imported) and an active-only /warehouses query (which failed to match archived placeholder WH001).
 - **Backend Direct Join Query**:
-  * Rewrote InventoryRepository.list_balances and get_balance_by_item_warehouse in ackend/app/repositories/inventory.py to perform direct SQL joins: inventory_balances JOIN items JOIN warehouses LEFT JOIN categories.
-  * Added joined projection fields to InventoryBalanceRead schema: item_code, item_description, category_name, unit, warehouse_code, warehouse_name, warehouse_is_active, and computed vailable_quantity.
+  * Rewrote InventoryRepository.list_balances and get_balance_by_item_warehouse in backend/app/repositories/inventory.py to perform direct SQL joins: inventory_balances JOIN items JOIN warehouses LEFT JOIN categories.
+  * Added joined projection fields to InventoryBalanceRead schema: item_code, item_description, category_name, unit, warehouse_code, warehouse_name, warehouse_is_active, and computed available_quantity.
   * Added include_inactive_warehouses: bool = Query(False) parameter to GET /api/v1/inventory/balances and list_balances. By default, balances for archived/inactive warehouses (warehouse.is_active == false, such as legacy WH001) are excluded unless explicitly filtered by warehouse_id or include_inactive_warehouses=true.
 - **Frontend Direct Rendering**:
-  * Streamlined useInventoryBalances in rontend/src/features/inventory/useInventoryData.ts to directly consume backend response fields without issuing redundant secondary network requests for all catalog items.
+  * Streamlined useInventoryBalances in frontend/src/features/inventory/useInventoryData.ts to directly consume backend response fields without issuing redundant secondary network requests for all catalog items.
   * Updated InventoryBalancesPage.tsx to render authentic joined fields directly.
   * Added an Include archived stores toggle and visual [Archived] badge for inactive store balances.
 
@@ -459,7 +459,22 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
 - Synchronized codebase and documentation between C:\dev\inventory-management-system and C:\Users\kirub\OneDrive\inventory-management-system.
 
 ### 3. Verification & Quality Gates
-- **Backend Tests**: pytest backend/tests passes 100% (**229 passed in 3.65s** across 16 test modules).
-- **Frontend Build**: 
-pm run build passes with 0 TypeScript/bundler errors (1,701 modules transformed in 6.05s).
-- **cPanel Artifact**: Packaged rontend/frontend-dist.tar.gz and copied to C:\Users\kirub\OneDrive\Desktop\OPENING-BALANCE-DIST.tar.gz (192 KB).
+- **Backend Tests**: pytest backend/tests passes 100% (**229 passed in 2.72s** across 16 test modules).
+- **Frontend Build**: npm run build passes with 0 TypeScript/bundler errors (1,701 modules transformed in 3.24s).
+- **cPanel Artifact**: Packaged frontend/frontend-dist.tar.gz and copied to C:\Users\kirub\OneDrive\Desktop\OPENING-BALANCE-DIST.tar.gz (192 KB).
+
+---
+
+## 2026-11-01 — Frontend CI/CD Deployment Automation via GitHub Actions
+
+### 1. Workflow Implementation
+- **File**: .github/workflows/deploy-frontend.yml
+- **Trigger**: Push to main branch when changes touch frontend/** or .github/workflows/deploy-frontend.yml, plus manual workflow_dispatch.
+- **Build Environment**: ubuntu-latest with Node.js 20 (actions/setup-node@v4) and npm dependency caching.
+- **Build Execution**: Runs npm ci and npm run build within frontend/ supplying VITE_API_URL and VITE_API_BASE_URL (https://api-inventory.moderngebeya.com/api/v1).
+- **Deployment Action**: SamKirkland/FTP-Deploy-Action@v4.3.5 transferring ./frontend/dist/ directly to root ./ on the cPanel subdomain.
+- **Server Routing Protection**: Excludes .htaccess, .well-known/**, and cgi-bin/** to guarantee Apache SPA URL rewrite rules, SSL certificates, and server scripts are never removed or overwritten.
+
+### 2. Security Hygiene (AGENTS.md Rule 5 & docs/SECURITY.md)
+- Zero secrets committed in code or workflow files.
+- FTP credentials secured exclusively via GitHub repository secrets: ${{ secrets.FTP_SERVER }}, ${{ secrets.FTP_USERNAME }}, and ${{ secrets.FTP_PASSWORD }}.
