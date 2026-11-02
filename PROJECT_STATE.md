@@ -555,3 +555,31 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Backend Tests**: 244 passed in 3.58s across 16 test modules (25 passed in `backend/tests/test_items.py` including manual item creation, case-insensitive duplicate rejection, updating item fields, audit logging, server-side search and pagination, and 403 authorization checks for `VIEWER`).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) completed with 0 errors (1,702 modules transformed).
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-02 — High-Performance Async Searchable Item Combobox for Transactions (GRV, SIV, ISTV, ISTRV, SRV, Adjustment)
+
+### 1. Architectural Scope & Implementation
+- **Searchable Item Combobox (`frontend/src/components/ItemCombobox.tsx`)**:
+  * Implemented reusable async combobox replacing static HTML `<select>` with 1,000+ un-indexed options across all transaction line tables.
+  * Instant debounced text typing (~250ms) querying `GET /api/v1/items?search={query}&page_size=50&is_active=true` leveraging GIN trigram index on `description` and B-tree index on `item_code`.
+  * Initial catalog presentation: when opened without a search query, displays the first 50 active items for immediate browsing and scroll selection.
+  * Selected item persistence: integrates a single-item detail query (`useQuery(['item-detail', value])`) ensuring that items already selected on a voucher always display their exact SKU badge (`[01-CM-00001]`), full description, and UOM even when outside the current 50 search results.
+  * Visual status & empty states: provides a loading spinner during debounced network fetches, clear "No items found matching '{query}'" empty state, keyboard navigation (`ArrowUp`, `ArrowDown`, `Enter`, `Escape`), and outside-click auto-close.
+  * Visual duplicate prevention (`ADR-006`): `excludeItemIds` prop visually disables and tags items already added to other lines on the same voucher (`Already added`), preventing client submission errors before validation triggers.
+  * UOM auto-population: on item selection, passes both `itemId` and the complete `item` object so transaction forms automatically populate `unit` with `item.default_unit`.
+- **Backend API Synonyms (`backend/app/api/routes/items.py`)**:
+  * Enhanced `GET /api/v1/items` to support parameter synonyms: `page_size` (alias for `limit`) and `is_active: bool | None` (synonym for `include_inactive = not is_active`), preserving complete backward compatibility with all prior callers.
+- **Transaction Line Tables Updated**:
+  * `GRVPage.tsx`: Replaced static SKU dropdown with `ItemCombobox`, retaining `Unit Price (ETB)`, auto-calculated `Total Price (ETB)`, total voucher value summary, and `ADR-006` validation.
+  * `SIVPage.tsx`: Replaced static SKU dropdown with `ItemCombobox`.
+  * `ISTVPage.tsx`: Replaced static SKU dropdown with `ItemCombobox`.
+  * `ISTRVPage.tsx`: Replaced static SKU dropdown with `ItemCombobox`.
+  * `SRVPage.tsx`: Replaced static SKU dropdown with `ItemCombobox`.
+  * `AdjustmentPage.tsx`: Replaced static SKU dropdown with `ItemCombobox`.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 244 passed in 3.43s across 16 test modules (including 25 tests in `test_items.py` verifying combobox query patterns `search`, `page_size`, and `is_active=true`).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

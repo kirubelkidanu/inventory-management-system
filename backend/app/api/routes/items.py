@@ -39,21 +39,28 @@ async def list_items(
     search: str | None = Query(None),
     category_id: UUID | None = Query(None),
     include_inactive: bool = Query(False),
+    is_active: bool | None = Query(None),
     skip: int = Query(0, ge=0),
     limit: int | None = Query(None, ge=1, le=2000),
+    page_size: int | None = Query(None, ge=1, le=2000),
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: ItemService = Depends(get_item_service),
 ):
+    eff_limit = limit if limit is not None else page_size
+    eff_include_inactive = include_inactive
+    if is_active is not None:
+        eff_include_inactive = not is_active
+
     if hasattr(service, "list_items_with_count"):
         items, total = await service.list_items_with_count(
             search=search,
             category_id=category_id,
-            include_inactive=include_inactive,
+            include_inactive=eff_include_inactive,
             skip=skip,
-            limit=limit,
+            limit=eff_limit,
         )
     else:
-        items = await service.list_items(include_inactive=include_inactive)
+        items = await service.list_items(include_inactive=eff_include_inactive)
         total = len(items)
 
     response.headers["X-Total-Count"] = str(total)

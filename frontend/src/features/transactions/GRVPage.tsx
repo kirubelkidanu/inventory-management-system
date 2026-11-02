@@ -10,14 +10,16 @@ import {
   ArrowLeft,
   Receipt,
 } from 'lucide-react'
-import { useWarehouses, useItems } from '@/features/inventory/useInventoryData'
+import { useWarehouses } from '@/features/inventory/useInventoryData'
+import { ItemCombobox } from '@/components/ItemCombobox'
+import api from '@/lib/api'
 import {
   useProjects,
   useCreateGRV,
   extractErrorMessage,
 } from './useTransactionData'
 import { VoucherSuccessCard } from './VoucherSuccessCard'
-import type { Transaction } from '@/types'
+import type { Item, Transaction } from '@/types'
 
 interface GRVLineForm {
   item_id: string
@@ -34,8 +36,6 @@ export const GRVPage: React.FC = () => {
 
   const { data: warehouses = [], isLoading: isLoadingWarehouses } = useWarehouses()
   const { data: projects = [], isLoading: isLoadingProjects } = useProjects()
-  const { data: itemsData, isLoading: isLoadingItems } = useItems({ limit: 1000 })
-  const items = itemsData?.items || []
 
   const [warehouseId, setWarehouseId] = useState(initialWarehouseId)
   const [projectId, setProjectId] = useState('')
@@ -57,19 +57,20 @@ export const GRVPage: React.FC = () => {
 
   // Update initial line unit if initialItemId is provided
   useEffect(() => {
-    if (initialItemId && items.length > 0) {
-      const match = items.find((i) => i.id === initialItemId)
-      if (match) {
-        setLines((prev) => {
-          const updated = [...prev]
-          if (updated[0] && updated[0].item_id === initialItemId) {
-            updated[0].unit = match.default_unit || 'PCS'
-          }
-          return updated
-        })
-      }
+    if (initialItemId) {
+      api.get<Item>(`/items/${initialItemId}`).then((res) => {
+        if (res.data?.default_unit) {
+          setLines((prev) => {
+            const updated = [...prev]
+            if (updated[0] && updated[0].item_id === initialItemId) {
+              updated[0].unit = res.data.default_unit
+            }
+            return updated
+          })
+        }
+      }).catch(() => {})
     }
-  }, [initialItemId, items])
+  }, [initialItemId])
 
   // Update warehouse if query parameter arrives after mount
   useEffect(() => {
@@ -78,12 +79,11 @@ export const GRVPage: React.FC = () => {
     }
   }, [initialWarehouseId, warehouseId])
 
-  const handleItemChange = (idx: number, newItemId: string) => {
-    const selectedItem = items.find((i) => i.id === newItemId)
+  const handleItemChange = (idx: number, newItemId: string, item?: Item) => {
     const updated = [...lines]
     updated[idx].item_id = newItemId
-    if (selectedItem?.default_unit) {
-      updated[idx].unit = selectedItem.default_unit
+    if (item?.default_unit) {
+      updated[idx].unit = item.default_unit
     }
     setLines(updated)
   }
@@ -367,22 +367,15 @@ export const GRVPage: React.FC = () => {
 
               return (
                 <div key={idx} className="flex flex-wrap lg:flex-nowrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
-                  <div className="flex-1 min-w-[200px]">
-                    <label className="block text-[11px] font-medium text-slate-500">Item SKU *</label>
-                    <select
+                  <div className="flex-1 min-w-[240px]">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Item SKU & Description *</label>
+                    <ItemCombobox
                       value={line.item_id}
-                      onChange={(e) => handleItemChange(idx, e.target.value)}
+                      onChange={(newItemId, selectedItem) => handleItemChange(idx, newItemId, selectedItem)}
                       required
-                      disabled={isLoadingItems}
-                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-sky-500 focus:outline-hidden"
-                    >
-                      <option value="">{isLoadingItems ? 'Loading catalog...' : 'Select SKU...'}</option>
-                      {items.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.item_code} — {i.description}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder="Search SKU or description..."
+                      excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
+                    />
                   </div>
 
                   <div className="w-24">

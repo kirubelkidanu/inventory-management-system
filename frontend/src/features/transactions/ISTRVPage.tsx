@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { PackageOpen, Plus, Trash2, ShieldAlert, Loader2, AlertTriangle, ArrowLeft, Truck } from 'lucide-react'
-import { useWarehouses, useItems } from '@/features/inventory/useInventoryData'
+import { useWarehouses } from '@/features/inventory/useInventoryData'
+import { ItemCombobox } from '@/components/ItemCombobox'
 import {
   useCreateISTRV,
   useInTransitTransfers,
@@ -15,8 +16,6 @@ export const ISTRVPage: React.FC = () => {
   const initialIstvId = searchParams.get('istv_id') || ''
 
   const { data: warehouses = [], isLoading: isLoadingWarehouses } = useWarehouses()
-  const { data: itemsData, isLoading: isLoadingItems } = useItems({ limit: 1000 })
-  const items = itemsData?.items || []
   const { data: inTransitTransfers = [], isLoading: isLoadingTransfers } = useInTransitTransfers()
 
   const [selectedTransferId, setSelectedTransferId] = useState(initialIstvId)
@@ -336,26 +335,19 @@ export const ISTRVPage: React.FC = () => {
           <div className="mt-3 space-y-3">
             {lines.map((line, idx) => (
               <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
-                <div className="flex-1 min-w-[220px]">
-                  <label className="block text-[11px] font-medium text-slate-500">Item SKU *</label>
-                  <select
+                <div className="flex-1 min-w-[240px]">
+                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Item SKU & Description *</label>
+                  <ItemCombobox
                     value={line.item_id}
-                    onChange={(e) => {
+                    onChange={(newItemId) => {
                       const updated = [...lines]
-                      updated[idx].item_id = e.target.value
+                      updated[idx].item_id = newItemId
                       setLines(updated)
                     }}
                     required
-                    disabled={isLoadingItems}
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-teal-500 focus:outline-hidden"
-                  >
-                    <option value="">{isLoadingItems ? 'Loading catalog...' : 'Select SKU...'}</option>
-                    {items.map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.item_code} — {i.description}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Search SKU or description..."
+                    excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
+                  />
                 </div>
 
                 <div className="w-36">

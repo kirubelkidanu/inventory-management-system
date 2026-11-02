@@ -887,6 +887,17 @@ async def test_list_items_server_side_search_and_pagination(token_factory, fake_
         assert len(search_items) == 1
         assert search_items[0]["item_code"] == "PAG-003"
         assert search_res.headers.get("x-total-count") == "1"
+
+        # Search with page_size and is_active=true (combobox query pattern)
+        combobox_res = await client.get(
+            "/api/v1/items?search=PAG&page_size=2&is_active=true",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert combobox_res.status_code == 200
+        combobox_items = combobox_res.json()
+        assert len(combobox_items) == 2
+        assert combobox_items[0]["item_code"] == "PAG-001"
+        assert combobox_items[1]["item_code"] == "PAG-002"
     app.dependency_overrides.clear()
 
 
