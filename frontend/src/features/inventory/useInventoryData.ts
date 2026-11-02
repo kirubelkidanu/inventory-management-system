@@ -46,6 +46,21 @@ export interface EnrichedInventoryBalance extends InventoryBalance {
   warehouse_is_active?: boolean
 }
 
+export interface ItemCreatePayload {
+  item_code: string
+  description: string
+  category_id: string
+  default_unit: string
+  is_active?: boolean
+}
+
+export interface ItemUpdatePayload {
+  description?: string
+  category_id?: string
+  default_unit?: string
+  is_active?: boolean
+}
+
 export function useCategories() {
   return useQuery<Category[]>({
     queryKey: ['categories'],
@@ -74,30 +89,59 @@ export function useItems(params: ItemQueryParams = {}) {
   return useQuery<{ items: Item[]; total: number }>({
     queryKey: ['items', { search, category_id, include_inactive, skip, limit }],
     queryFn: async () => {
-      const response = await api.get<Item[]>('/items', {
-        params: include_inactive ? { include_inactive: true } : undefined,
-      })
-      let items = response.data || []
-
-      // Client filter if backend returns full catalog list
-      if (category_id) {
-        items = items.filter((i) => i.category_id === category_id)
+      const queryParams: Record<string, string | number | boolean> = {
+        include_inactive,
+        skip,
+        limit,
       }
       if (search && search.trim()) {
-        const q = search.toLowerCase().trim()
-        items = items.filter(
-          (i) =>
-            i.item_code.toLowerCase().includes(q) ||
-            i.description.toLowerCase().includes(q)
-        )
+        queryParams.search = search.trim()
+      }
+      if (category_id) {
+        queryParams.category_id = category_id
       }
 
-      const total = items.length
-      const paginated = items.slice(skip, skip + limit)
+      const response = await api.get<Item[]>('/items', {
+        params: queryParams,
+      })
+      const items = response.data || []
+      const headerTotal = response.headers?.['x-total-count']
+      const total =
+        headerTotal !== undefined && headerTotal !== null
+          ? parseInt(String(headerTotal), 10)
+          : items.length
 
-      return { items: paginated, total }
+      return { items, total }
     },
     staleTime: 30 * 1000,
+  })
+}
+
+export function useCreateItem() {
+  const queryClient = useQueryClient()
+  return useMutation<Item, Error, ItemCreatePayload>({
+    mutationFn: async (payload: ItemCreatePayload) => {
+      const response = await api.post<Item>('/items', payload)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+    },
+  })
+}
+
+export function useUpdateItem() {
+  const queryClient = useQueryClient()
+  return useMutation<Item, Error, { id: string; payload: ItemUpdatePayload }>({
+    mutationFn: async ({ id, payload }: { id: string; payload: ItemUpdatePayload }) => {
+      const response = await api.put<Item>(`/items/${id}`, payload)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+    },
   })
 }
 

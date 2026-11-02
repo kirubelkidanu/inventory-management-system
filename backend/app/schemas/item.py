@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ItemBase(BaseModel):
@@ -14,6 +14,14 @@ class ItemBase(BaseModel):
     is_active: bool = True
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("item_code", "description", "default_unit")
+    @classmethod
+    def validate_non_empty_strings(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Field cannot be empty or whitespace.")
+        return s
 
 
 class ItemCreate(ItemBase):
@@ -27,6 +35,16 @@ class ItemUpdate(BaseModel):
     is_active: bool | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("description", "default_unit")
+    @classmethod
+    def validate_optional_strings(cls, v: str | None) -> str | None:
+        if v is not None:
+            s = v.strip()
+            if not s:
+                raise ValueError("Field cannot be empty or whitespace.")
+            return s
+        return v
 
 
 class ItemRead(ItemBase):

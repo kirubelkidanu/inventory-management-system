@@ -27,10 +27,58 @@ class FakeItemService:
         self.categories = FakeCategoryStore()
         self.items_with_history: set[str] = set()
 
-    async def list_items(self, include_inactive: bool = False):
-        if include_inactive:
-            return list(self.store.values())
-        return [item for item in self.store.values() if item.is_active]
+    async def list_items(
+        self,
+        search: str | None = None,
+        category_id=None,
+        include_inactive: bool = False,
+        skip: int | None = None,
+        limit: int | None = None,
+    ):
+        items = list(self.store.values())
+        if not include_inactive:
+            items = [item for item in items if item.is_active]
+        if category_id is not None:
+            items = [item for item in items if str(item.category_id) == str(category_id)]
+        if search and search.strip():
+            term = search.strip().lower()
+            items = [
+                item for item in items
+                if term in item.item_code.lower() or term in item.description.lower()
+            ]
+        items.sort(key=lambda x: x.item_code)
+        if skip is not None and skip > 0:
+            items = items[skip:]
+        if limit is not None and limit > 0:
+            items = items[:limit]
+        return items
+
+    async def list_items_with_count(
+        self,
+        search: str | None = None,
+        category_id=None,
+        include_inactive: bool = False,
+        skip: int | None = None,
+        limit: int | None = None,
+    ):
+        all_items = list(self.store.values())
+        if not include_inactive:
+            all_items = [item for item in all_items if item.is_active]
+        if category_id is not None:
+            all_items = [item for item in all_items if str(item.category_id) == str(category_id)]
+        if search and search.strip():
+            term = search.strip().lower()
+            all_items = [
+                item for item in all_items
+                if term in item.item_code.lower() or term in item.description.lower()
+            ]
+        total = len(all_items)
+        items = sorted(all_items, key=lambda x: x.item_code)
+        if skip is not None and skip > 0:
+            items = items[skip:]
+        if limit is not None and limit > 0:
+            items = items[:limit]
+        return items, total
 
     async def get_item(self, item_id):
         item = self.store.get(str(item_id))
@@ -38,17 +86,18 @@ class FakeItemService:
             raise HTTPException(status_code=404, detail="Item not found.")
         return item
 
-    async def create_item(self, payload):
-        if any(item.item_code == payload.item_code for item in self.store.values()):
+    async def create_item(self, payload, actor_user_id=None):
+        clean_code = payload.item_code.strip()
+        if any(item.item_code.lower() == clean_code.lower() for item in self.store.values()):
             raise HTTPException(status_code=409, detail="Item code already exists.")
         if str(payload.category_id) not in self.categories.store:
             raise HTTPException(status_code=400, detail="category_id references a non-existent category.")
         item = Item(
             id=uuid4(),
-            item_code=payload.item_code,
-            description=payload.description,
+            item_code=clean_code,
+            description=payload.description.strip(),
             category_id=payload.category_id,
-            default_unit=payload.default_unit,
+            default_unit=payload.default_unit.strip(),
             is_active=payload.is_active,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
@@ -56,16 +105,16 @@ class FakeItemService:
         self.store[str(item.id)] = item
         return item
 
-    async def update_item(self, item_id, payload):
+    async def update_item(self, item_id, payload, actor_user_id=None):
         item = await self.get_item(item_id)
         if payload.description is not None:
-            item.description = payload.description
+            item.description = payload.description.strip()
         if payload.category_id is not None and payload.category_id != item.category_id:
             if str(payload.category_id) not in self.categories.store:
                 raise HTTPException(status_code=400, detail="category_id references a non-existent category.")
             item.category_id = payload.category_id
         if payload.default_unit is not None:
-            item.default_unit = payload.default_unit
+            item.default_unit = payload.default_unit.strip()
         if payload.is_active is not None:
             item.is_active = payload.is_active
         item.updated_at = datetime.now(timezone.utc)
@@ -667,4 +716,229 @@ async def test_item_service_delete_used_item_soft_archives():
     assert audit_call.kwargs["action"] == "UPDATE"
     assert audit_call.kwargs["entity_id"] == str(test_item.id)
     service.repository.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_item_inventory_manager_success(token_factory, fake_service):
+    app.dependency_overrides[get_item_service] = lambda: fake_service
+    token = token_factory(role="INVENTORY_MANAGER", user_id="manager-001")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "MGR-001",
+                "description": "Manager Created Item",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "PCS",
+                "is_active": True,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    app.dependency_overrides.clear()
+    assert response.status_code == 201
+    data = response.json()
+    assert data["item_code"] == "MGR-001"
+    assert data["description"] == "Manager Created Item"
+
+
+@pytest.mark.asyncio
+async def test_create_item_case_insensitive_duplicate_fails(token_factory, fake_service):
+    app.dependency_overrides[get_item_service] = lambda: fake_service
+    token = token_factory(role="ADMIN")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res1 = await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "SKU-CASE-100",
+                "description": "Initial SKU",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "PCS",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert res1.status_code == 201
+
+        # Attempt to insert same SKU with different casing
+        res2 = await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "sku-case-100",
+                "description": "Duplicate Lowercase SKU",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "PCS",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert res2.status_code == 409
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_update_item_inventory_manager_success(token_factory, fake_service):
+    app.dependency_overrides[get_item_service] = lambda: fake_service
+    token = token_factory(role="INVENTORY_MANAGER")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "MGR-UPD-001",
+                "description": "Initial Item Description",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "PCS",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        item_id = created.json()["id"]
+
+        update_res = await client.put(
+            f"/api/v1/items/{item_id}",
+            json={
+                "description": "Updated Description By Manager",
+                "default_unit": "KG",
+                "is_active": True,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert update_res.status_code == 200
+        updated = update_res.json()
+        assert updated["description"] == "Updated Description By Manager"
+        assert updated["default_unit"] == "KG"
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_item_forbidden_for_viewer(token_factory, fake_service):
+    app.dependency_overrides[get_item_service] = lambda: fake_service
+    admin_token = token_factory(role="ADMIN")
+    viewer_token = token_factory(role="VIEWER")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "VIEWER-TEST-001",
+                "description": "Viewer Test Item",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "PCS",
+            },
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        item_id = created.json()["id"]
+
+        # Viewer create attempt
+        create_res = await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "VIEWER-DENIED",
+                "description": "Denied Item",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "PCS",
+            },
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+        assert create_res.status_code == 403
+
+        # Viewer update attempt
+        update_res = await client.put(
+            f"/api/v1/items/{item_id}",
+            json={"description": "Hacked Description"},
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+        assert update_res.status_code == 403
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_list_items_server_side_search_and_pagination(token_factory, fake_service):
+    app.dependency_overrides[get_item_service] = lambda: fake_service
+    token = token_factory(role="ADMIN")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Create 5 items
+        for i in range(1, 6):
+            await client.post(
+                "/api/v1/items",
+                json={
+                    "item_code": f"PAG-{i:03d}",
+                    "description": f"Paginated Item {i}",
+                    "category_id": str(fake_service.categories.valid_category_id),
+                    "default_unit": "PCS",
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        # Pagination: skip=1, limit=2
+        res = await client.get(
+            "/api/v1/items?skip=1&limit=2",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert res.status_code == 200
+        items = res.json()
+        assert len(items) == 2
+        assert items[0]["item_code"] == "PAG-002"
+        assert items[1]["item_code"] == "PAG-003"
+        assert res.headers.get("x-total-count") == "5"
+
+        # Search: 'Paginated Item 3'
+        search_res = await client.get(
+            "/api/v1/items?search=Item 3",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert search_res.status_code == 200
+        search_items = search_res.json()
+        assert len(search_items) == 1
+        assert search_items[0]["item_code"] == "PAG-003"
+        assert search_res.headers.get("x-total-count") == "1"
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_item_service_create_and_update_audit_logging():
+    from unittest.mock import AsyncMock
+    from app.services.item import ItemService
+
+    mock_session = AsyncMock()
+    service = ItemService(mock_session)
+
+    cat_id = uuid4()
+    service.repository.get_by_code = AsyncMock(return_value=None)
+    service.repository.get_category_by_id = AsyncMock(return_value=True)
+    created_item = Item(
+        id=uuid4(),
+        item_code="AUDIT-001",
+        description="Audit Item",
+        category_id=cat_id,
+        default_unit="PCS",
+        is_active=True,
+    )
+    service.repository.create = AsyncMock(return_value=created_item)
+    service.repository.create_audit_log = AsyncMock()
+    service.repository.commit = AsyncMock()
+
+    from app.schemas.item import ItemCreate, ItemUpdate
+    create_payload = ItemCreate(
+        item_code="AUDIT-001",
+        description="Audit Item",
+        category_id=cat_id,
+        default_unit="PCS",
+    )
+    item = await service.create_item(create_payload, actor_user_id="user-mgr")
+    assert item.item_code == "AUDIT-001"
+    service.repository.create_audit_log.assert_awaited_once()
+    create_audit_call = service.repository.create_audit_log.await_args
+    assert create_audit_call.kwargs["action"] == "CREATE"
+    assert create_audit_call.kwargs["entity_type"] == "item"
+    assert create_audit_call.kwargs["entity_id"] == str(created_item.id)
+
+    # Test update audit log
+    service.repository.get_by_id = AsyncMock(return_value=created_item)
+    service.repository.update = AsyncMock(return_value=created_item)
+    service.repository.create_audit_log.reset_mock()
+
+    update_payload = ItemUpdate(description="Updated Audit Desc")
+    await service.update_item(created_item.id, update_payload, actor_user_id="user-mgr")
+    service.repository.create_audit_log.assert_awaited_once()
+    upd_audit_call = service.repository.create_audit_log.await_args
+    assert upd_audit_call.kwargs["action"] == "UPDATE"
+    assert upd_audit_call.kwargs["entity_type"] == "item"
+    assert upd_audit_call.kwargs["before_state"]["description"] == "Audit Item"
+    assert upd_audit_call.kwargs["after_state"]["description"] == "Updated Audit Desc"
 

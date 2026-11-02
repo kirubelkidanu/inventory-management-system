@@ -33,8 +33,43 @@ class ItemService:
     def __init__(self, session: AsyncSession) -> None:
         self.repository = ItemRepository(session)
 
-    async def list_items(self, include_inactive: bool = False) -> list[Item]:
-        return await self.repository.list(include_inactive=include_inactive)
+    async def list_items(
+        self,
+        search: str | None = None,
+        category_id: UUID | None = None,
+        include_inactive: bool = False,
+        skip: int | None = None,
+        limit: int | None = None,
+    ) -> list[Item]:
+        return await self.repository.list(
+            search=search,
+            category_id=category_id,
+            include_inactive=include_inactive,
+            skip=skip,
+            limit=limit,
+        )
+
+    async def list_items_with_count(
+        self,
+        search: str | None = None,
+        category_id: UUID | None = None,
+        include_inactive: bool = False,
+        skip: int | None = None,
+        limit: int | None = None,
+    ) -> tuple[list[Item], int]:
+        items = await self.repository.list(
+            search=search,
+            category_id=category_id,
+            include_inactive=include_inactive,
+            skip=skip,
+            limit=limit,
+        )
+        total = await self.repository.count(
+            search=search,
+            category_id=category_id,
+            include_inactive=include_inactive,
+        )
+        return items, total
 
     async def get_item(self, item_id: UUID) -> Item:
         item = await self.repository.get_by_id(item_id)
@@ -45,8 +80,13 @@ class ItemService:
             )
         return item
 
-    async def create_item(self, payload: ItemCreate) -> Item:
-        existing = await self.repository.get_by_code(payload.item_code)
+    async def create_item(
+        self,
+        payload: ItemCreate,
+        actor_user_id: UUID | str | None = None,
+    ) -> Item:
+        clean_code = payload.item_code.strip()
+        existing = await self.repository.get_by_code(clean_code)
         if existing is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -61,15 +101,15 @@ class ItemService:
             )
 
         item = Item(
-            item_code=payload.item_code,
-            description=payload.description,
+            item_code=clean_code,
+            description=payload.description.strip(),
             category_id=payload.category_id,
-            default_unit=payload.default_unit,
+            default_unit=payload.default_unit.strip(),
             is_active=payload.is_active,
         )
 
         try:
-            return await self.repository.create(item)
+            created_item = await self.repository.create(item)
         except IntegrityError:
             await self.repository.session.rollback()
             raise HTTPException(
@@ -77,11 +117,46 @@ class ItemService:
                 detail="Item could not be created due to a uniqueness constraint.",
             ) from None
 
-    async def update_item(self, item_id: UUID, payload: ItemUpdate) -> Item:
+        parsed_user_id = _to_uuid(actor_user_id)
+        await self.repository.create_audit_log(
+            actor_user_id=parsed_user_id,
+            action="CREATE",
+            entity_type="item",
+            entity_id=str(created_item.id),
+            before_state=None,
+            after_state={
+                "id": str(created_item.id),
+                "item_code": created_item.item_code,
+                "description": created_item.description,
+                "category_id": str(created_item.category_id),
+                "default_unit": created_item.default_unit,
+                "is_active": created_item.is_active,
+            },
+            change_summary=f"Created item {created_item.item_code}",
+        )
+        await self.repository.commit()
+        return created_item
+
+    async def update_item(
+        self,
+        item_id: UUID,
+        payload: ItemUpdate,
+        actor_user_id: UUID | str | None = None,
+    ) -> Item:
         item = await self.get_item(item_id)
+        parsed_user_id = _to_uuid(actor_user_id)
+
+        before_state = {
+            "id": str(item.id),
+            "item_code": item.item_code,
+            "description": item.description,
+            "category_id": str(item.category_id),
+            "default_unit": item.default_unit,
+            "is_active": item.is_active,
+        }
 
         if payload.description is not None:
-            item.description = payload.description
+            item.description = payload.description.strip()
         if payload.category_id is not None and payload.category_id != item.category_id:
             category = await self.repository.get_category_by_id(payload.category_id)
             if category is None:
@@ -91,18 +166,39 @@ class ItemService:
                 )
             item.category_id = payload.category_id
         if payload.default_unit is not None:
-            item.default_unit = payload.default_unit
+            item.default_unit = payload.default_unit.strip()
         if payload.is_active is not None:
             item.is_active = payload.is_active
 
         try:
-            return await self.repository.update(item)
+            updated_item = await self.repository.update(item)
         except IntegrityError:
             await self.repository.session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Item could not be updated due to a uniqueness constraint.",
             ) from None
+
+        after_state = {
+            "id": str(updated_item.id),
+            "item_code": updated_item.item_code,
+            "description": updated_item.description,
+            "category_id": str(updated_item.category_id),
+            "default_unit": updated_item.default_unit,
+            "is_active": updated_item.is_active,
+        }
+
+        await self.repository.create_audit_log(
+            actor_user_id=parsed_user_id,
+            action="UPDATE",
+            entity_type="item",
+            entity_id=str(updated_item.id),
+            before_state=before_state,
+            after_state=after_state,
+            change_summary=f"Updated item {updated_item.item_code}",
+        )
+        await self.repository.commit()
+        return updated_item
 
     async def delete_item(
         self,

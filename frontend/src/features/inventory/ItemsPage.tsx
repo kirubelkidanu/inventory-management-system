@@ -4,6 +4,8 @@ import {
   Filter,
   RotateCw,
   Eye,
+  Pencil,
+  Plus,
   ChevronLeft,
   ChevronRight,
   CheckCircle,
@@ -21,6 +23,8 @@ import type { Item } from '@/types'
 import {
   useItems,
   useCategories,
+  useCreateItem,
+  useUpdateItem,
   useDeleteItem,
   useBulkDeleteItems,
   useRestoreItem,
@@ -30,9 +34,26 @@ import { ItemDetailsDrawer } from './ItemDetailsDrawer'
 import { ImportItemsModal } from './components/ImportItemsModal'
 import { cn } from '@/lib/utils'
 
+const UNIT_CHIPS = ['PCS', 'KG', 'BAG', 'M2', 'M3', 'ROLL', 'SET', 'LTR']
+
+const getErrorMessage = (err: unknown, defaultMsg: string): string => {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const res = (err as { response?: { data?: { detail?: unknown } } }).response
+    if (res?.data?.detail) {
+      if (typeof res.data.detail === 'string') return res.data.detail
+      if (Array.isArray(res.data.detail)) {
+        return res.data.detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join(', ')
+      }
+    }
+  }
+  if (err instanceof Error) return err.message
+  return defaultMsg
+}
+
 export const ItemsPage: React.FC = () => {
   const { hasRole } = useAuth()
   const isAdmin = hasRole('ADMIN')
+  const isManager = hasRole('ADMIN', 'INVENTORY_MANAGER')
 
   // Search & filter state
   const [searchInput, setSearchInput] = useState('')
@@ -54,6 +75,27 @@ export const ItemsPage: React.FC = () => {
     item?: Item
   }>({ isOpen: false, mode: 'bulk' })
 
+  // Add Item Modal state
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [addForm, setAddForm] = useState({
+    item_code: '',
+    description: '',
+    category_id: '',
+    default_unit: 'PCS',
+    is_active: true,
+  })
+  const [addError, setAddError] = useState<string | null>(null)
+
+  // Edit Item Modal state
+  const [editItem, setEditItem] = useState<Item | null>(null)
+  const [editForm, setEditForm] = useState({
+    description: '',
+    category_id: '',
+    default_unit: 'PCS',
+    is_active: true,
+  })
+  const [editError, setEditError] = useState<string | null>(null)
+
   // Notification alert banner
   const [notification, setNotification] = useState<{
     type: 'success' | 'error' | 'info'
@@ -61,6 +103,8 @@ export const ItemsPage: React.FC = () => {
   } | null>(null)
 
   // Mutations
+  const createItemMutation = useCreateItem()
+  const updateItemMutation = useUpdateItem()
   const deleteItemMutation = useDeleteItem()
   const bulkDeleteMutation = useBulkDeleteItems()
   const restoreItemMutation = useRestoreItem()
@@ -138,6 +182,60 @@ export const ItemsPage: React.FC = () => {
     setPage(1)
   }
 
+  // Create submission
+  const handleAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setAddError(null)
+    try {
+      const created = await createItemMutation.mutateAsync({
+        item_code: addForm.item_code.trim(),
+        description: addForm.description.trim(),
+        category_id: addForm.category_id,
+        default_unit: addForm.default_unit.trim(),
+        is_active: addForm.is_active,
+      })
+      setIsAddModalOpen(false)
+      setAddForm({
+        item_code: '',
+        description: '',
+        category_id: categories?.[0]?.id || '',
+        default_unit: 'PCS',
+        is_active: true,
+      })
+      setNotification({
+        type: 'success',
+        message: `Item "${created.item_code}" was created successfully.`,
+      })
+    } catch (err: unknown) {
+      setAddError(getErrorMessage(err, 'Failed to create item.'))
+    }
+  }
+
+  // Edit submission
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editItem) return
+    setEditError(null)
+    try {
+      const updated = await updateItemMutation.mutateAsync({
+        id: editItem.id,
+        payload: {
+          description: editForm.description.trim(),
+          category_id: editForm.category_id,
+          default_unit: editForm.default_unit.trim(),
+          is_active: editForm.is_active,
+        },
+      })
+      setEditItem(null)
+      setNotification({
+        type: 'success',
+        message: `Item "${updated.item_code}" was updated successfully.`,
+      })
+    } catch (err: unknown) {
+      setEditError(getErrorMessage(err, 'Failed to update item.'))
+    }
+  }
+
   // Deletion execution
   const executeDelete = async () => {
     try {
@@ -212,6 +310,23 @@ export const ItemsPage: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isManager && (
+            <button
+              type="button"
+              onClick={() => {
+                setAddForm((prev) => ({
+                  ...prev,
+                  category_id: prev.category_id || categories?.[0]?.id || '',
+                }))
+                setIsAddModalOpen(true)
+                setAddError(null)
+              }}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-500 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add New Item</span>
+            </button>
+          )}
           {isAdmin && (
             <button
               type="button"
@@ -467,6 +582,27 @@ export const ItemsPage: React.FC = () => {
                             <span className="hidden sm:inline">View</span>
                           </button>
 
+                          {isManager && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditItem(item)
+                                setEditForm({
+                                  description: item.description,
+                                  category_id: item.category_id,
+                                  default_unit: item.default_unit,
+                                  is_active: item.is_active,
+                                })
+                                setEditError(null)
+                              }}
+                              title="Edit Item Details"
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-700 shadow-xs hover:bg-amber-50 hover:border-amber-300 transition-colors"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline">Edit</span>
+                            </button>
+                          )}
+
                           {isAdmin && !item.is_active && (
                             <button
                               type="button"
@@ -607,6 +743,325 @@ export const ItemsPage: React.FC = () => {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add New Item Modal */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                  <Plus className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Add New Inventory Item</h3>
+                  <p className="text-xs text-slate-500">Register a new catalog SKU definition</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddModalOpen(false)
+                  setAddError(null)
+                }}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {addError && (
+              <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                <span>{addError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Item Code / SKU <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={addForm.item_code}
+                  onChange={(e) => setAddForm((prev) => ({ ...prev, item_code: e.target.value.toUpperCase() }))}
+                  placeholder="e.g. 01-CM-00001 or ST-BAR-12"
+                  className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm font-mono placeholder-slate-400 focus:border-emerald-500 focus:outline-hidden"
+                />
+                <p className="mt-1 text-[11px] text-slate-400">Unique identifier across the inventory master catalog.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Description <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={addForm.description}
+                  onChange={(e) => setAddForm((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="e.g. Portland Pozzolana Cement (PPC) 50KG Bag"
+                  className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm placeholder-slate-400 focus:border-emerald-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Category <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  required
+                  value={addForm.category_id}
+                  onChange={(e) => setAddForm((prev) => ({ ...prev, category_id: e.target.value }))}
+                  className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-emerald-500 focus:outline-hidden bg-white"
+                >
+                  <option value="" disabled>Select Item Category</option>
+                  {(categories || []).map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name} ({cat.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Default Unit of Measure (UOM) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={addForm.default_unit}
+                  onChange={(e) => setAddForm((prev) => ({ ...prev, default_unit: e.target.value.toUpperCase() }))}
+                  placeholder="e.g. PCS, KG, BAG"
+                  className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm font-mono focus:border-emerald-500 focus:outline-hidden"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-slate-400 mr-1">Quick Select:</span>
+                  {UNIT_CHIPS.map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setAddForm((prev) => ({ ...prev, default_unit: chip }))}
+                      className={cn(
+                        'rounded-md px-2 py-0.5 text-xs font-mono font-medium transition-colors border',
+                        addForm.default_unit === chip
+                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold'
+                          : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                      )}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-1">
+                <label className="inline-flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={addForm.is_active}
+                    onChange={(e) => setAddForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                    className="h-4 w-4 rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span>Active in Catalog (Available for stock receiving & issuing)</span>
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddModalOpen(false)
+                    setAddError(null)
+                  }}
+                  disabled={createItemMutation.isPending}
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createItemMutation.isPending}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  {createItemMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Creating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Create Item</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Item Modal */}
+      {editItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                  <Pencil className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Edit Item Master</h3>
+                  <p className="text-xs text-slate-500">Update specification, category, and UOM</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditItem(null)
+                  setEditError(null)
+                }}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {editError && (
+              <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-800 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                <span>{editError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleEditSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Item Code / SKU (Immutable)
+                </label>
+                <input
+                  type="text"
+                  disabled
+                  value={editItem.item_code}
+                  className="block w-full rounded-lg border border-slate-200 bg-slate-100 py-2 px-3 text-sm font-mono text-slate-500 cursor-not-allowed"
+                />
+                <p className="mt-1 text-[11px] text-slate-400">SKU codes are immutable to protect transaction ledger integrity.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Description <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="Detailed item description"
+                  className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-amber-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Category <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  required
+                  value={editForm.category_id}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, category_id: e.target.value }))}
+                  className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-amber-500 focus:outline-hidden bg-white"
+                >
+                  {(categories || []).map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name} ({cat.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Default Unit of Measure (UOM) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.default_unit}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, default_unit: e.target.value.toUpperCase() }))}
+                  placeholder="e.g. PCS, KG, BAG"
+                  className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm font-mono focus:border-amber-500 focus:outline-hidden"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-slate-400 mr-1">Quick Select:</span>
+                  {UNIT_CHIPS.map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setEditForm((prev) => ({ ...prev, default_unit: chip }))}
+                      className={cn(
+                        'rounded-md px-2 py-0.5 text-xs font-mono font-medium transition-colors border',
+                        editForm.default_unit === chip
+                          ? 'bg-amber-100 text-amber-800 border-amber-300 font-bold'
+                          : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                      )}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-1">
+                <label className="inline-flex items-center gap-2 cursor-pointer select-none text-xs font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={editForm.is_active}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                    className="h-4 w-4 rounded-sm border-slate-300 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span>Active in Catalog</span>
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditItem(null)
+                    setEditError(null)
+                  }}
+                  disabled={updateItemMutation.isPending}
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updateItemMutation.isPending}
+                  className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-amber-500 disabled:opacity-50"
+                >
+                  {updateItemMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Pencil className="h-3.5 w-3.5" />
+                      <span>Save Changes</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

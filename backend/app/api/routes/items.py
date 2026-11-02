@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -30,16 +30,33 @@ async def create_item(
     current_user: AuthenticatedUser = Depends(require_roles("ADMIN", "INVENTORY_MANAGER")),
     service: ItemService = Depends(get_item_service),
 ):
-    return await service.create_item(payload)
+    return await service.create_item(payload, actor_user_id=current_user.user_id)
 
 
 @router.get("", response_model=list[ItemRead])
 async def list_items(
+    response: Response,
+    search: str | None = Query(None),
+    category_id: UUID | None = Query(None),
     include_inactive: bool = Query(False),
+    skip: int = Query(0, ge=0),
+    limit: int | None = Query(None, ge=1, le=2000),
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: ItemService = Depends(get_item_service),
 ):
-    items = await service.list_items(include_inactive=include_inactive)
+    if hasattr(service, "list_items_with_count"):
+        items, total = await service.list_items_with_count(
+            search=search,
+            category_id=category_id,
+            include_inactive=include_inactive,
+            skip=skip,
+            limit=limit,
+        )
+    else:
+        items = await service.list_items(include_inactive=include_inactive)
+        total = len(items)
+
+    response.headers["X-Total-Count"] = str(total)
     return [ItemRead.model_validate(item) for item in items]
 
 
@@ -72,7 +89,11 @@ async def update_item(
     current_user: AuthenticatedUser = Depends(require_roles("ADMIN", "INVENTORY_MANAGER")),
     service: ItemService = Depends(get_item_service),
 ):
-    item = await service.update_item(item_id, payload)
+    item = await service.update_item(
+        item_id=item_id,
+        payload=payload,
+        actor_user_id=current_user.user_id,
+    )
     return ItemRead.model_validate(item)
 
 

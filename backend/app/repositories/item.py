@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -19,18 +19,65 @@ class ItemRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list(self, include_inactive: bool = False) -> list[Item]:
+    async def list(
+        self,
+        search: str | None = None,
+        category_id: UUID | None = None,
+        include_inactive: bool = False,
+        skip: int | None = None,
+        limit: int | None = None,
+    ) -> list[Item]:
         stmt = select(Item)
         if not include_inactive:
             stmt = stmt.where(Item.is_active.is_(True))
-        result = await self.session.execute(stmt.order_by(Item.item_code.asc()))
+        if category_id is not None:
+            stmt = stmt.where(Item.category_id == category_id)
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(Item.item_code).like(term),
+                    func.lower(Item.description).like(term),
+                )
+            )
+        stmt = stmt.order_by(Item.item_code.asc())
+        if skip is not None and skip > 0:
+            stmt = stmt.offset(skip)
+        if limit is not None and limit > 0:
+            stmt = stmt.limit(limit)
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def count(
+        self,
+        search: str | None = None,
+        category_id: UUID | None = None,
+        include_inactive: bool = False,
+    ) -> int:
+        stmt = select(func.count(Item.id))
+        if not include_inactive:
+            stmt = stmt.where(Item.is_active.is_(True))
+        if category_id is not None:
+            stmt = stmt.where(Item.category_id == category_id)
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(Item.item_code).like(term),
+                    func.lower(Item.description).like(term),
+                )
+            )
+        result = await self.session.execute(stmt)
+        return result.scalar_one() or 0
 
     async def get_by_id(self, item_id: UUID) -> Item | None:
         return await self.session.get(Item, item_id)
 
     async def get_by_code(self, item_code: str) -> Item | None:
-        result = await self.session.execute(select(Item).where(Item.item_code == item_code))
+        clean = item_code.strip().lower()
+        result = await self.session.execute(
+            select(Item).where(func.lower(Item.item_code) == clean)
+        )
         return result.scalar_one_or_none()
 
     async def get_category_by_id(self, category_id: UUID) -> Category | None:

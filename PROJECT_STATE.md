@@ -530,3 +530,28 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Backend Tests**: 238 passed in 4.88s across 16 test modules (30 passed in test_transactions.py including API-level and service-level GRV unit price persistence and computed total price).
 - **Frontend Build**: npm run build completed with 0 errors (1,702 modules transformed in 5.04s).
 - **Security Check**: Verified 0 secrets exposed (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-02 — Manual Item Maintenance with Create, Edit, Safe Delete, and Audit Logging
+
+### 1. Architectural Scope & Implementation
+- **Strict Role-Based Access Control (RBAC)**:
+  * `POST /api/v1/items`: Restricted to `ADMIN` and `INVENTORY_MANAGER`. Enforces non-empty strings and case-insensitive uniqueness check on `item_code`. Records an `AuditLog` entry (`action='CREATE'`, `entity_type='item'`, `entity_id=str(item.id)`, `change_summary='Created item {item_code}'`). Non-authorized roles (`VIEWER`, `STORE_KEEPER`) receive HTTP 403 Forbidden.
+  * `PUT /api/v1/items/{item_id}`: Restricted to `ADMIN` and `INVENTORY_MANAGER`. Allows updating `description`, `category_id`, `default_unit`, and `is_active`. SKU `item_code` remains strictly immutable to protect ledger referential integrity. Records an `AuditLog` entry (`action='UPDATE'`, `entity_type='item'`, with full `before_state` and `after_state`). Non-authorized roles receive HTTP 403 Forbidden.
+  * `DELETE /api/v1/items/{item_id}` & `POST /api/v1/items/bulk-delete`: Restricted to `ADMIN` with referential integrity protection (hard-deletes unused items with 0 balances; soft-archives items with inventory or transaction history).
+  * `GET /api/v1/items`: Accessible to all authenticated users. Enhanced with query filters: `search`, `category_id`, `include_inactive`, `skip`, and `limit`. Returns `X-Total-Count` header.
+- **CORS Expose Headers**:
+  * Updated `CORSMiddleware` in `backend/app/main.py` to include `expose_headers=["*", "X-Total-Count"]`, allowing browser frontend clients to access pagination totals.
+- **Frontend Item Maintenance Screen (`/items`)**:
+  * Added "+ Add New Item" button in `ItemsPage.tsx` header, visible to `ADMIN` and `INVENTORY_MANAGER`.
+  * Added "Add New Item" modal with fields: Item Code (SKU), Description, Category dropdown, Default Unit of Measure with quick-fill chips (`PCS`, `KG`, `BAG`, `M2`, `M3`, `ROLL`, `SET`, `LTR`), and Active status toggle.
+  * Added "Edit Item Master" modal triggered by a per-row pencil button (visible to `ADMIN` and `INVENTORY_MANAGER`), with immutable SKU display, editable description, category, default unit chips, and active toggle.
+  * Connected server-side search, category filter, and pagination via `useItems`, `useCreateItem`, and `useUpdateItem` mutation hooks with TanStack Query cache invalidation for `['items']` and `['inventory-balances']`.
+- **Database & Stock Invariants**:
+  * Dual-write ledger logic (`ADR-001`, `ADR-002`, `ADR-003`) remains completely untouched. Item maintenance does not modify stock balances directly; all stock changes strictly flow through `TransactionService`.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 244 passed in 3.58s across 16 test modules (25 passed in `backend/tests/test_items.py` including manual item creation, case-insensitive duplicate rejection, updating item fields, audit logging, server-side search and pagination, and 403 authorization checks for `VIEWER`).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) completed with 0 errors (1,702 modules transformed).
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
