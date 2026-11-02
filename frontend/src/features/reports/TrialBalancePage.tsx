@@ -16,6 +16,7 @@ import {
   Truck,
   ChevronLeft,
   ChevronRight,
+  Banknote,
 } from 'lucide-react'
 import { useWarehouses, useCategories } from '@/features/inventory/useInventoryData'
 import { useProjects, useTransaction } from '@/features/transactions/useTransactionData'
@@ -145,7 +146,7 @@ export const TrialBalancePage: React.FC = () => {
       </div>
 
       {/* Summary Stat Strip */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -183,6 +184,26 @@ export const TrialBalancePage: React.FC = () => {
             {isLoading ? '...' : Number(data?.total_out || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
           <span className="text-[11px] text-rose-600/80">Issued to projects or transferred</span>
+        </div>
+
+        <div className="rounded-2xl border border-sky-200 bg-sky-50/50 p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-sky-700">
+              Movement Valuation (ETB)
+            </span>
+            <Banknote className="h-4 w-4 text-sky-600" />
+          </div>
+          <p className="mt-2 text-2xl font-bold font-mono text-sky-700">
+            {isLoading
+              ? '...'
+              : data?.total_valuation !== null && data?.total_valuation !== undefined
+              ? Number(data.total_valuation).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })
+              : '—'}
+          </p>
+          <span className="text-[11px] text-sky-600/80">Page movements valuation</span>
         </div>
       </div>
 
@@ -360,20 +381,22 @@ export const TrialBalancePage: React.FC = () => {
                 <th className="py-3 px-3.5 text-right whitespace-nowrap">IN (Qty)</th>
                 <th className="py-3 px-3.5 text-right whitespace-nowrap">OUT (Qty)</th>
                 <th className="py-3 px-3.5 text-right whitespace-nowrap">Running Bal</th>
+                <th className="py-3 px-3.5 text-right whitespace-nowrap">Unit Price (ETB)</th>
+                <th className="py-3 px-3.5 text-right whitespace-nowrap">Total Value (ETB)</th>
                 <th className="py-3 px-3 whitespace-nowrap">Entered By</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {isLoading ? (
                 <tr>
-                  <td colSpan={12} className="py-16 text-center text-slate-400">
+                  <td colSpan={14} className="py-16 text-center text-slate-400">
                     <Loader2 className="mx-auto h-7 w-7 animate-spin text-slate-400 mb-2" />
                     <span>Loading Trial Balance records...</span>
                   </td>
                 </tr>
               ) : !data || data.items.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-16 text-center text-slate-400">
+                  <td colSpan={14} className="py-16 text-center text-slate-400">
                     <Scale className="mx-auto h-8 w-8 text-slate-300 mb-2" />
                     <p className="font-semibold text-slate-600">No stock movements found</p>
                     <p className="text-xs text-slate-400 mt-0.5">Try widening your date range or clearing filters.</p>
@@ -437,6 +460,16 @@ export const TrialBalancePage: React.FC = () => {
                     <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                       {row.running_balance !== null && row.running_balance !== undefined
                         ? Number(row.running_balance).toLocaleString(undefined, { minimumFractionDigits: 2 })
+                        : '—'}
+                    </td>
+                    <td className="py-3 px-3.5 text-right font-mono font-medium text-slate-800 whitespace-nowrap">
+                      {row.unit_price !== null && row.unit_price !== undefined
+                        ? Number(row.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : '—'}
+                    </td>
+                    <td className="py-3 px-3.5 text-right font-mono font-bold text-sky-700 whitespace-nowrap">
+                      {row.total_price !== null && row.total_price !== undefined
+                        ? Number(row.total_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                         : '—'}
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap text-slate-600">
@@ -596,9 +629,11 @@ export const TrialBalancePage: React.FC = () => {
                       <thead className="bg-slate-50 font-semibold text-slate-600">
                         <tr>
                           <th className="py-2.5 px-3">#</th>
-                          <th className="py-2.5 px-3">Item ID</th>
+                          <th className="py-2.5 px-3">Item</th>
                           <th className="py-2.5 px-3 text-right">Quantity</th>
                           <th className="py-2.5 px-3">Unit</th>
+                          <th className="py-2.5 px-3 text-right">Unit Price (ETB)</th>
+                          <th className="py-2.5 px-3 text-right">Total Price (ETB)</th>
                           <th className="py-2.5 px-3">Remarks</th>
                         </tr>
                       </thead>
@@ -606,11 +641,23 @@ export const TrialBalancePage: React.FC = () => {
                         {transactionDetails.lines?.map((l, idx) => (
                           <tr key={l.id || idx}>
                             <td className="py-2 px-3 font-mono text-slate-400">{l.line_number || idx + 1}</td>
-                            <td className="py-2 px-3 font-mono font-medium text-slate-800">{l.item_id}</td>
+                            <td className="py-2 px-3 font-mono font-medium text-slate-800">
+                              {l.item ? `${l.item.item_code} - ${l.item.description}` : l.item_id}
+                            </td>
                             <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
                               {Number(l.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="py-2 px-3 font-mono text-slate-600">{l.unit}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-700">
+                              {l.unit_price !== null && l.unit_price !== undefined
+                                ? Number(l.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                : '—'}
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono font-bold text-sky-700">
+                              {l.total_price !== null && l.total_price !== undefined
+                                ? Number(l.total_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                : '—'}
+                            </td>
                             <td className="py-2 px-3 text-slate-500">{l.remarks || '—'}</td>
                           </tr>
                         ))}

@@ -206,6 +206,7 @@ async def test_service_trial_balance_report():
             "running_balance": Decimal("150.0000"),
             "status": "POSTED",
             "entered_by_name": "Admin User",
+            "unit_price": Decimal("8133.0000"),
         },
         {
             "movement_id": mov_id2,
@@ -258,6 +259,8 @@ async def test_service_trial_balance_report():
     assert in_row.in_quantity == Decimal("150.0000")
     assert in_row.out_quantity == Decimal("0.0000")
     assert in_row.reference_number == "INV-101"
+    assert in_row.unit_price == Decimal("8133.0000")
+    assert in_row.total_price == Decimal("1219950.0000")
 
     # Verify OUT row mapping
     out_row = response.items[1]
@@ -265,6 +268,11 @@ async def test_service_trial_balance_report():
     assert out_row.out_quantity == Decimal("40.0000")
     assert out_row.signed_quantity == Decimal("-40.0000")
     assert out_row.reference_number == "SIV-202"
+    assert out_row.unit_price is None
+    assert out_row.total_price is None
+
+    # Total valuation
+    assert response.total_valuation == Decimal("1219950.0000")
 
 
 @pytest.mark.asyncio
@@ -303,6 +311,7 @@ async def test_service_export_trial_balance_excel():
             "running_balance": Decimal("100.0000"),
             "status": "POSTED",
             "entered_by_name": "Admin",
+            "unit_price": Decimal("8133.0000"),
         }
     ]
     service.repo.get_all_trial_balance_movements = AsyncMock(return_value=raw_rows)
@@ -320,6 +329,18 @@ async def test_service_export_trial_balance_excel():
     assert "Tx Number" in headers
     assert "IN" in headers
     assert "OUT" in headers
+    assert "Unit Price (ETB)" in headers
+    assert "Total Value (ETB)" in headers
+
+    # Check data row 5
+    row_5_vals = [cell.value for cell in ws[5]]
+    # Column 17 is Unit Price (idx 16), Column 18 is Total Value (idx 17)
+    assert row_5_vals[16] == 8133.0
+    assert row_5_vals[17] == 813300.0
+
+    # Check total row 6
+    row_6_vals = [cell.value for cell in ws[6]]
+    assert row_6_vals[17] == 813300.0
 
 
 @pytest.mark.asyncio

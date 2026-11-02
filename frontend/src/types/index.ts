@@ -180,6 +180,8 @@ export interface TrialBalanceItem {
   running_balance?: number | string | null
   status: string
   entered_by_name: string
+  unit_price?: number | string | null
+  total_price?: number | string | null
 }
 
 export interface TrialBalanceResponse {
@@ -189,6 +191,7 @@ export interface TrialBalanceResponse {
   items: TrialBalanceItem[]
   total_in: number | string
   total_out: number | string
+  total_valuation?: number | string | null
 }
 
 export interface CountSheetItem {

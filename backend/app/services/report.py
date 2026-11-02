@@ -48,6 +48,18 @@ class ReportService:
             in_qty = Decimal("0.0000")
             out_qty = quantity
 
+        raw_unit_price = row.get("unit_price")
+        unit_price = (
+            Decimal(str(raw_unit_price)).quantize(Decimal("0.0001"))
+            if raw_unit_price is not None
+            else None
+        )
+        total_price = (
+            (unit_price * quantity).quantize(Decimal("0.0001"))
+            if unit_price is not None
+            else None
+        )
+
         return TrialBalanceItem(
             movement_id=row["movement_id"],
             movement_date=row["movement_date"],
@@ -77,6 +89,8 @@ class ReportService:
             ),
             status=row.get("status", "POSTED"),
             entered_by_name=row.get("entered_by_name", "System"),
+            unit_price=unit_price,
+            total_price=total_price,
         )
 
     async def get_trial_balance_report(
@@ -111,6 +125,10 @@ class ReportService:
         )
 
         items = [self._map_trial_balance_item(r) for r in rows]
+        total_valuation = sum(
+            (item.total_price for item in items if item.total_price is not None),
+            Decimal("0.0000"),
+        )
         return TrialBalanceResponse(
             total_count=total_count,
             page=page,
@@ -118,6 +136,7 @@ class ReportService:
             items=items,
             total_in=total_in,
             total_out=total_out,
+            total_valuation=total_valuation,
         )
 
     async def export_trial_balance_excel(
@@ -168,7 +187,7 @@ class ReportService:
         )
 
         # Title Block
-        ws.merge_cells("A1:R1")
+        ws.merge_cells("A1:T1")
         title_cell = ws["A1"]
         title_cell.value = "DETAILED INVENTORY MOVEMENT / TRIAL BALANCE"
         title_cell.font = title_font
@@ -177,7 +196,7 @@ class ReportService:
 
         # Metadata Row
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        ws.merge_cells("A2:R2")
+        ws.merge_cells("A2:T2")
         sub_cell = ws["A2"]
         sub_cell.value = f"Generated: {generated_at} | Total Records: {len(raw_rows)}"
         sub_cell.font = Font(name="Calibri", size=10, italic=True, color="595959")
@@ -202,6 +221,8 @@ class ReportService:
             "IN",
             "OUT",
             "Running Bal",
+            "Unit Price (ETB)",
+            "Total Value (ETB)",
             "Status",
             "Entered By",
         ]
@@ -220,11 +241,14 @@ class ReportService:
         # Data Rows
         sum_in = Decimal("0.0000")
         sum_out = Decimal("0.0000")
+        sum_val = Decimal("0.0000")
 
         for row_dict in raw_rows:
             item = self._map_trial_balance_item(row_dict)
             sum_in += item.in_quantity
             sum_out += item.out_quantity
+            if item.total_price is not None:
+                sum_val += item.total_price
 
             row_data = [
                 item.movement_date.strftime("%Y-%m-%d"),
@@ -243,6 +267,8 @@ class ReportService:
                 float(item.in_quantity),
                 float(item.out_quantity),
                 float(item.running_balance) if item.running_balance is not None else "",
+                float(item.unit_price) if item.unit_price is not None else "",
+                float(item.total_price) if item.total_price is not None else "",
                 item.status,
                 item.entered_by_name,
             ]
@@ -258,7 +284,10 @@ class ReportService:
                 if col_idx in (14, 15, 16):
                     cell.alignment = Alignment(horizontal="right", vertical="center")
                     cell.number_format = "#,##0.0000"
-                elif col_idx in (1, 3, 8, 9, 17):
+                elif col_idx in (17, 18):
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    cell.number_format = "#,##0.00"
+                elif col_idx in (1, 3, 8, 9, 19):
                     cell.alignment = Alignment(horizontal="center", vertical="center")
                 else:
                     cell.alignment = Alignment(horizontal="left", vertical="center")
@@ -284,6 +313,8 @@ class ReportService:
                 float(sum_out),
                 "",
                 "",
+                float(sum_val),
+                "",
                 "",
             ]
         )
@@ -300,6 +331,9 @@ class ReportService:
             if col_idx in (14, 15):
                 cell.alignment = Alignment(horizontal="right", vertical="center")
                 cell.number_format = "#,##0.0000"
+            elif col_idx == 18:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                cell.number_format = "#,##0.00"
 
         # Auto-adjust column widths
         for col in ws.columns:

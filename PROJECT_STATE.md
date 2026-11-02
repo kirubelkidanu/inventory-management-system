@@ -583,3 +583,34 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Backend Tests**: 244 passed in 3.43s across 16 test modules (including 25 tests in `test_items.py` verifying combobox query patterns `search`, `page_size`, and `is_active=true`).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-02 — Unit Price (ETB) and Total Valuation (ETB) in Trial Balance Ledger and Excel Export
+
+### 1. Architectural Scope & Implementation
+- **Backend Schema & Service (`backend/app/schemas/report.py`, `backend/app/services/report.py`, `backend/app/repositories/report.py`)**:
+  * Extended `TrialBalanceItem` with `unit_price: Optional[Decimal] = None` and `total_price: Optional[Decimal] = None`.
+  * Extended `TrialBalanceResponse` with `total_valuation: Optional[Decimal] = None`.
+  * Updated `ReportRepository.get_trial_balance` and `get_all_trial_balance_movements` queries to select `TransactionLine.unit_price`. Maintained the exact 4-tuple return signature `(rows, total_count, total_in, total_out)` for backward compatibility with existing tests.
+  * In `ReportService._map_trial_balance_item`, extracted `unit_price` quantized to 4 decimal places and auto-computed `total_price = unit_price * quantity` (or `None` when unit price is unrecorded).
+  * In `ReportService.get_trial_balance_report`, computed `total_valuation = sum(item.total_price for item in items if item.total_price is not None)`.
+  * In `ReportService.export_trial_balance_excel`:
+    * Expanded headers from 18 to 20 columns by inserting "Unit Price (ETB)" (col 17) and "Total Value (ETB)" (col 18).
+    * Updated title and metadata banner merges from `A1:R1` and `A2:R2` to `A1:T1` and `A2:T2`.
+    * Formatted numeric columns 17 and 18 with currency format `#,##0.00`.
+    * Extended total row with cumulative valuation sum `sum_val` in column 18 and adjusted merged summary label `A{total_row}:M{total_row}`.
+- **Frontend Types & UI (`frontend/src/types/index.ts`, `frontend/src/features/reports/TrialBalancePage.tsx`)**:
+  * Added `unit_price` and `total_price` to `TrialBalanceItem`, and `total_valuation` to `TrialBalanceResponse`.
+  * Added a 4th summary stat card to `TrialBalancePage.tsx` displaying `Movement Valuation (ETB)` formatted to 2 decimal places with `Banknote` icon.
+  * Added "Unit Price (ETB)" and "Total Value (ETB)" columns to the authoritative ledger table, formatting positive numbers as currency or "—" when blank.
+  * Updated loading and empty state table `colSpan` from 12 to 14.
+  * Enhanced the Transaction Inspection modal line items table to show "Unit Price (ETB)" and "Total Price (ETB)" alongside item SKU descriptions.
+- **Data Integrity & Ledger Invariants**:
+  * Stock immutability trigger `trg_protect_stock_movements` and `vw_reconciliation_discrepancies` remain completely untouched (0 discrepancies).
+  * No database migrations were needed as `unit_price` already resides in `transaction_lines` (migration 004).
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 244 passed in 3.54s across 16 test modules (including updated `test_reports.py` validating unit price and valuation in report mapping, Excel columns, and totals).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

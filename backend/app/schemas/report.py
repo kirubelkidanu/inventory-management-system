@@ -32,6 +32,8 @@ class TrialBalanceItem(BaseModel):
     running_balance: Optional[Decimal] = None
     status: str
     entered_by_name: str
+    unit_price: Optional[Decimal] = None
+    total_price: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -43,6 +45,7 @@ class TrialBalanceResponse(BaseModel):
     items: List[TrialBalanceItem]
     total_in: Decimal
     total_out: Decimal
+    total_valuation: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)
 
