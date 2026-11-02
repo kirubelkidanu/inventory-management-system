@@ -126,6 +126,11 @@ class TransactionService:
             # Create Transaction lines
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
+                unit_price = (
+                    Decimal(str(line_input.unit_price))
+                    if line_input.unit_price is not None
+                    else Decimal("0.0000")
+                )
                 line = TransactionLine(
                     id=uuid.uuid4(),
                     transaction_id=tx_id,
@@ -133,6 +138,7 @@ class TransactionService:
                     item_id=line_input.item_id,
                     quantity=line_input.quantity,
                     unit=line_input.unit,
+                    unit_price=unit_price,
                     remarks=line_input.remarks,
                 )
                 lines.append(line)

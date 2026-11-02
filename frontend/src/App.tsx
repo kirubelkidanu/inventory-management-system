@@ -11,6 +11,7 @@ import { InventoryBalancesPage } from '@/features/inventory/InventoryBalancesPag
 import { ItemsPage } from '@/features/inventory/ItemsPage'
 import { OpeningBalancePage } from '@/features/inventory/OpeningBalancePage'
 import { TransactionsListPage } from '@/features/transactions/TransactionsListPage'
+import { TransactionDetailPage } from '@/features/transactions/TransactionDetailPage'
 import { GRVPage } from '@/features/transactions/GRVPage'
 import { SIVPage } from '@/features/transactions/SIVPage'
 import { ISTVPage } from '@/features/transactions/ISTVPage'
@@ -57,6 +58,7 @@ export const App: React.FC = () => {
 
                 {/* Transactions */}
                 <Route path="/transactions" element={<TransactionsListPage />} />
+                <Route path="/transactions/:id" element={<TransactionDetailPage />} />
                 <Route path="/transactions/grv" element={<GRVPage />} />
                 <Route path="/transactions/siv" element={<SIVPage />} />
                 <Route path="/transactions/istv" element={<ISTVPage />} />

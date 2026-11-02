@@ -507,3 +507,26 @@ esults).
 - **Frontend Build**: 
 pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Security Check**: Verified 0 secrets exposed (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-02 — Goods Receiving Voucher (GRV) Unit Price & Auto-Calculated Total Price Implementation
+
+### 1. Architectural Scope & Implementation
+- **Backend Transaction Service**:
+  * Updated TransactionService.create_and_post_grv in backend/app/services/transaction.py to persist line.unit_price directly onto transaction_lines.
+  * If unit_price is omitted or None, defaults gracefully to Decimal("0.0000") preserving all existing transaction semantics and tests.
+  * Invariant Protection: Dual-write ledger logic (ADR-001, ADR-002, ADR-003) remains strictly unchanged. Physical quantities update inventory_balances.quantity_on_hand and append IN stock movements to stock_movements.
+  * TransactionLineRead computes total_price = (quantity * unit_price).quantize(Decimal("0.0001")) when unit_price is present.
+- **Frontend GRV Entry Form & Transaction Details**:
+  * Updated GRVPage.tsx with Unit Price (ETB) numeric input (min: 0, step: 0.01) and auto-calculated Total Price (ETB) read-only display column (quantity * unit_price).
+  * Added real-time summary badge below the line items table displaying Total Voucher Value (ETB) and total received item units.
+  * Updated VoucherSuccessCard.tsx to display Total Voucher Value for posted vouchers.
+  * Updated TransactionsListPage.tsx modal detail view to render Unit Price (ETB), Total Price (ETB), and Total Voucher Value (ETB) for GRV vouchers and vouchers with unit prices.
+  * Added TransactionDetailPage.tsx for dedicated voucher inspection and registered route /transactions/:id in App.tsx.
+  * Updated useTransactionData.ts TransactionLineInput schema to accept optional unit_price?: number | null.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 238 passed in 4.88s across 16 test modules (30 passed in test_transactions.py including API-level and service-level GRV unit price persistence and computed total price).
+- **Frontend Build**: npm run build completed with 0 errors (1,702 modules transformed in 5.04s).
+- **Security Check**: Verified 0 secrets exposed (AGENTS.md Rule 5 & 6).

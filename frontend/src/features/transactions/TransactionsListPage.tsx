@@ -396,9 +396,16 @@ export const TransactionsListPage: React.FC = () => {
 
             {/* Line items table */}
             <div>
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-900 mb-2">
-                <Layers className="h-4 w-4 text-slate-500" />
-                <span>Voucher Line Items ({selectedTx.lines?.length || 0})</span>
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-900 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <Layers className="h-4 w-4 text-slate-500" />
+                  <span>Voucher Line Items ({selectedTx.lines?.length || 0})</span>
+                </div>
+                {selectedTx.lines && selectedTx.lines.length > 0 && (
+                  <span className="text-slate-500">
+                    Total Qty: <strong className="text-slate-800">{selectedTx.lines.reduce((acc, l) => acc + (Number(l.quantity) || 0), 0).toLocaleString()}</strong>
+                  </span>
+                )}
               </div>
               <div className="overflow-hidden rounded-xl border border-slate-200">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
@@ -408,25 +415,48 @@ export const TransactionsListPage: React.FC = () => {
                       <th className="py-2.5 px-3">Item ID</th>
                       <th className="py-2.5 px-3 text-right">Quantity</th>
                       <th className="py-2.5 px-3">Unit</th>
+                      {(selectedTx.transaction_type === 'GRV' || (selectedTx.lines || []).some((l) => l.unit_price !== undefined && l.unit_price !== null)) && (
+                        <>
+                          <th className="py-2.5 px-3 text-right">Unit Price (ETB)</th>
+                          <th className="py-2.5 px-3 text-right">Total Price (ETB)</th>
+                        </>
+                      )}
                       <th className="py-2.5 px-3">Line Remarks</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
                     {selectedTx.lines && selectedTx.lines.length > 0 ? (
-                      selectedTx.lines.map((l, idx) => (
-                        <tr key={l.id || idx}>
-                          <td className="py-2 px-3 font-mono text-slate-400">{l.line_number || idx + 1}</td>
-                          <td className="py-2 px-3 font-mono font-medium text-slate-800">{l.item_id}</td>
-                          <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
-                            {Number(l.quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-2 px-3 font-mono text-slate-600">{l.unit}</td>
-                          <td className="py-2 px-3 text-slate-500">{l.remarks || '—'}</td>
-                        </tr>
-                      ))
+                      selectedTx.lines.map((l, idx) => {
+                        const qty = Number(l.quantity) || 0
+                        const price = l.unit_price !== undefined && l.unit_price !== null ? Number(l.unit_price) : 0
+                        const lineTotal = l.total_price !== undefined && l.total_price !== null ? Number(l.total_price) : qty * price
+                        const showPrices = selectedTx.transaction_type === 'GRV' || (selectedTx.lines || []).some((item) => item.unit_price !== undefined && item.unit_price !== null)
+
+                        return (
+                          <tr key={l.id || idx}>
+                            <td className="py-2 px-3 font-mono text-slate-400">{l.line_number || idx + 1}</td>
+                            <td className="py-2 px-3 font-mono font-medium text-slate-800">{l.item_id}</td>
+                            <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                              {qty.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2 px-3 font-mono text-slate-600">{l.unit}</td>
+                            {showPrices && (
+                              <>
+                                <td className="py-2 px-3 text-right font-mono text-slate-700">
+                                  {price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
+                                  {lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                              </>
+                            )}
+                            <td className="py-2 px-3 text-slate-500">{l.remarks || '—'}</td>
+                          </tr>
+                        )
+                      })
                     ) : (
                       <tr>
-                        <td colSpan={5} className="py-4 text-center text-slate-400">
+                        <td colSpan={7} className="py-4 text-center text-slate-400">
                           No line items recorded on this transaction header
                         </td>
                       </tr>
@@ -434,6 +464,20 @@ export const TransactionsListPage: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+
+              {/* Total voucher value badge for GRV or transactions with prices */}
+              {selectedTx.lines && selectedTx.lines.length > 0 && (selectedTx.transaction_type === 'GRV' || selectedTx.lines.some((l) => l.unit_price !== undefined && l.unit_price !== null)) && (
+                <div className="mt-2.5 flex items-center justify-between rounded-xl border border-sky-100 bg-sky-50/70 p-3 text-xs">
+                  <span className="font-semibold text-slate-700">Total Voucher Value (ETB):</span>
+                  <span className="font-mono text-sm font-bold text-sky-950">
+                    ETB {selectedTx.lines.reduce((sum, l) => {
+                      const q = Number(l.quantity) || 0
+                      const p = Number(l.unit_price) || 0
+                      return sum + q * p
+                    }, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Signatory / Audit info */}

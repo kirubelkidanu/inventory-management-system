@@ -61,6 +61,7 @@ class FakeTransactionService:
                 item_id=line.item_id,
                 quantity=line.quantity,
                 unit=line.unit,
+                unit_price=line.unit_price if line.unit_price is not None else Decimal("0.0000"),
                 remarks=line.remarks,
             )
             for idx, line in enumerate(payload.lines, start=1)
@@ -824,3 +825,88 @@ def test_transaction_number_generator():
     assert num1.startswith("GRV-20260918-")
     assert num2.startswith("SIV-20260918-")
     assert num1 != num2
+
+
+
+@pytest.mark.asyncio
+async def test_grv_with_unit_price_via_api(token_factory):
+    app.dependency_overrides[get_transaction_service] = lambda: FakeTransactionService()
+    token = token_factory(role="ADMIN")
+    payload = {
+        "warehouse_id": str(uuid4()),
+        "supplier_name": "Acme Cement Supplier",
+        "lines": [
+            {
+                "item_id": str(uuid4()),
+                "quantity": 20.0,
+                "unit": "BAG",
+                "unit_price": 250.75,
+                "remarks": "Standard 50kg bag",
+            }
+        ],
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/transactions/grv",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    app.dependency_overrides.clear()
+    assert response.status_code == 201
+    data = response.json()
+    assert data["transaction_type"] == "GRV"
+    assert len(data["lines"]) == 1
+    line = data["lines"][0]
+    assert Decimal(str(line["quantity"])) == Decimal("20.0")
+    assert Decimal(str(line["unit_price"])) == Decimal("250.75")
+    assert Decimal(str(line["total_price"])) == Decimal("5015.0000")
+
+
+@pytest.mark.asyncio
+async def test_service_grv_persists_unit_price_and_computed_total():
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={})
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+
+    new_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("0.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+    service.repo.get_or_create_balance = AsyncMock(return_value=new_bal)
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+
+    payload = GRVCreate(
+        warehouse_id=wh_id,
+        supplier_name="Direct Steel Import",
+        lines=[
+            TransactionLineCreate(
+                item_id=item_id,
+                quantity=Decimal("100.0000"),
+                unit="PCS",
+                unit_price=Decimal("350.5000"),
+            )
+        ],
+    )
+
+    tx = await service.create_and_post_grv(user_id=user_id, payload=payload)
+    assert tx.transaction_type == "GRV"
+
+    service.repo.create_transaction_lines.assert_awaited_once()
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("350.5000")
