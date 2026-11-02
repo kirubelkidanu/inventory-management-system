@@ -17,6 +17,15 @@ from app.schemas.import_ import (
     InitialStockBatchPreview,
     InitialStockRow,
 )
+from app.schemas.item import (
+    ItemBase,
+    ItemBulkDeleteRequest,
+    ItemBulkDeleteResult,
+    ItemCreate,
+    ItemDeleteResult,
+    ItemRead,
+    ItemUpdate,
+)
 from app.schemas.reconciliation import (
     CountSheetItem,
     CountSheetResponse,
@@ -67,6 +76,13 @@ __all__ = [
     "InTransitReportItem",
     "InitialStockBatchPreview",
     "InitialStockRow",
+    "ItemBase",
+    "ItemBulkDeleteRequest",
+    "ItemBulkDeleteResult",
+    "ItemCreate",
+    "ItemDeleteResult",
+    "ItemRead",
+    "ItemUpdate",
     "LoginRequest",
     "PhysicalCountItemInput",
     "PhysicalCountSubmitRequest",
@@ -89,5 +105,3 @@ __all__ = [
     "UserAuthResponse",
     "VarianceItem",
 ]
-
-

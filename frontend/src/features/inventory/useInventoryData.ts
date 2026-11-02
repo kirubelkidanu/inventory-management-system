@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
 import type {
   Item,
+  ItemDeleteResult,
+  ItemBulkDeleteResult,
   Category,
   Warehouse,
   InventoryBalance,
@@ -18,6 +20,7 @@ import type {
 export interface ItemQueryParams {
   search?: string
   category_id?: string
+  include_inactive?: boolean
   skip?: number
   limit?: number
 }
@@ -66,12 +69,14 @@ export function useWarehouses() {
 }
 
 export function useItems(params: ItemQueryParams = {}) {
-  const { search, category_id, skip = 0, limit = 50 } = params
+  const { search, category_id, include_inactive = false, skip = 0, limit = 50 } = params
 
   return useQuery<{ items: Item[]; total: number }>({
-    queryKey: ['items', { search, category_id, skip, limit }],
+    queryKey: ['items', { search, category_id, include_inactive, skip, limit }],
     queryFn: async () => {
-      const response = await api.get<Item[]>('/items')
+      const response = await api.get<Item[]>('/items', {
+        params: include_inactive ? { include_inactive: true } : undefined,
+      })
       let items = response.data || []
 
       // Client filter if backend returns full catalog list
@@ -295,5 +300,50 @@ export function useOpeningBalanceTransactions() {
       return response.data || []
     },
     staleTime: 30 * 1000,
+  })
+}
+
+
+export function useDeleteItem() {
+  const queryClient = useQueryClient()
+  return useMutation<ItemDeleteResult, Error, string>({
+    mutationFn: async (itemId: string) => {
+      const response = await api.delete<ItemDeleteResult>('/items/' + itemId)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+    },
+  })
+}
+
+export function useBulkDeleteItems() {
+  const queryClient = useQueryClient()
+  return useMutation<ItemBulkDeleteResult, Error, string[]>({
+    mutationFn: async (itemIds: string[]) => {
+      const response = await api.post<ItemBulkDeleteResult>('/items/bulk-delete', {
+        item_ids: itemIds,
+      })
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+    },
+  })
+}
+
+export function useRestoreItem() {
+  const queryClient = useQueryClient()
+  return useMutation<Item, Error, string>({
+    mutationFn: async (itemId: string) => {
+      const response = await api.patch<Item>('/items/' + itemId + '/restore')
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
+    },
   })
 }

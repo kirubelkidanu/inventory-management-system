@@ -478,3 +478,32 @@ A rigorous 5-step audit was executed across backend and frontend in accordance w
 ### 2. Security Hygiene (AGENTS.md Rule 5 & docs/SECURITY.md)
 - Zero secrets committed in code or workflow files.
 - FTP credentials secured exclusively via GitHub repository secrets: ${{ secrets.FTP_SERVER }}, ${{ secrets.FTP_USERNAME }}, and ${{ secrets.FTP_PASSWORD }}.
+
+---
+
+## 2026-11-02 — Admin Single & Bulk Item Delete with Ledger-Safe Soft Archival (Option A)
+
+### 1. Architectural Scope & Implementation
+- **Strict Referential Integrity Enforcement (ADR-003 & DATABASE.md)**:
+  * Inspected foreign key restrictions (ON DELETE RESTRICT) on items(id) across 	ransaction_lines, stock_movements, 	ransfer_lines, and inventory_balances.
+  * Added ItemRepository.check_item_usage: checks counts of referencing lines in transactions, stock movements, and transfer lines, plus retrieves balance rows for non-zero stock (quantity_on_hand > 0 or quantity_reserved > 0).
+  * **Unused Items**: If no transactions, movements, or transfers exist and inventory balances are zero (or absent), zero-quantity balances are deleted first, then the item is hard-deleted from items. An AuditLog entry with ction='DELETE', entity_type='item', entity_id=str(item.id), efore_state={...}, and change_summary='Hard-deleted unused item {item_code}' is recorded atomically. Outcome is DELETED.
+  * **Used/Stocked Items**: If transactions, movements, transfers, or non-zero stock exist, hard-deletion is blocked. The item is soft-archived by setting is_active = False. An AuditLog entry with ction='UPDATE', efore_state={'is_active': True}, fter_state={'is_active': False}, and change_summary='Soft-archived item {item_code} with existing inventory history' is recorded atomically. Outcome is ARCHIVED.
+- **API Endpoints & RBAC Authorization**:
+  * DELETE /api/v1/items/{item_id}: Restricted to ADMIN role (
+equire_roles('ADMIN')). Returns ItemDeleteResult. Non-admins receive 403 Forbidden.
+  * POST /api/v1/items/bulk-delete: Restricted to ADMIN role. Takes ItemBulkDeleteRequest (item_ids: list[UUID]), executes atomic deletion/archival loop, and returns ItemBulkDeleteResult (deleted_count, rchived_count, 
+esults).
+  * PATCH /api/v1/items/{item_id}/restore: Restricted to ADMIN role. Restores is_active = True, records AuditLog action UPDATE, and returns updated ItemRead.
+  * GET /api/v1/items: Supports include_inactive: bool = Query(False). By default, only active items (is_active == True) are returned.
+- **Frontend Item Master Catalog Enhancements**:
+  * Added ItemDeleteResult and ItemBulkDeleteResult models in rontend/src/types/index.ts.
+  * Added useDeleteItem, useBulkDeleteItems, and useRestoreItem mutation hooks in rontend/src/features/inventory/useInventoryData.ts, with query invalidation for ['items'] and ['inventory-balances'].
+  * Updated ItemsPage.tsx with admin-only table row checkboxes, 'Select all on page' header checkbox, floating bulk action bar ({count} items selected, 'Clear Selection', 'Delete / Archive Selected'), row-level Delete/Restore action buttons, 'Include archived items' toggle, dynamic feedback alert banner, and confirmation modal with enterprise warning text.
+  * Re-exported ItemsPage from rontend/src/features/inventory/ItemMasterPage.tsx for route/module compatibility.
+
+### 2. Quality Verification & Test Coverage
+- **Backend Tests**: 236 passed in 3.54s across 16 test modules (19 passed in ackend/tests/test_items.py including unused hard-delete, used soft-archive, bulk delete, restore, include-inactive filter, role authorization 403 checks, and service unit tests).
+- **Frontend Build**: 
+pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
+- **Security Check**: Verified 0 secrets exposed (AGENTS.md Rule 5 & 6).

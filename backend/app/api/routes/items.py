@@ -1,10 +1,17 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.schemas.item import ItemCreate, ItemRead, ItemUpdate
+from app.schemas.item import (
+    ItemBulkDeleteRequest,
+    ItemBulkDeleteResult,
+    ItemCreate,
+    ItemDeleteResult,
+    ItemRead,
+    ItemUpdate,
+)
 from app.security.auth import AuthenticatedUser, get_current_user, require_roles
 from app.services.item import ItemService
 
@@ -28,11 +35,24 @@ async def create_item(
 
 @router.get("", response_model=list[ItemRead])
 async def list_items(
+    include_inactive: bool = Query(False),
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: ItemService = Depends(get_item_service),
 ):
-    items = await service.list_items()
+    items = await service.list_items(include_inactive=include_inactive)
     return [ItemRead.model_validate(item) for item in items]
+
+
+@router.post("/bulk-delete", response_model=ItemBulkDeleteResult)
+async def bulk_delete_items(
+    payload: ItemBulkDeleteRequest,
+    current_user: AuthenticatedUser = Depends(require_roles("ADMIN")),
+    service: ItemService = Depends(get_item_service),
+):
+    return await service.bulk_delete_items(
+        item_ids=payload.item_ids,
+        actor_user_id=current_user.user_id,
+    )
 
 
 @router.get("/{item_id}", response_model=ItemRead)
@@ -56,11 +76,26 @@ async def update_item(
     return ItemRead.model_validate(item)
 
 
-@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{item_id}", response_model=ItemDeleteResult)
 async def delete_item(
     item_id: UUID,
-    current_user: AuthenticatedUser = Depends(require_roles("ADMIN", "INVENTORY_MANAGER")),
+    current_user: AuthenticatedUser = Depends(require_roles("ADMIN")),
     service: ItemService = Depends(get_item_service),
 ):
-    await service.delete_item(item_id)
-    return None
+    return await service.delete_item(
+        item_id=item_id,
+        actor_user_id=current_user.user_id,
+    )
+
+
+@router.patch("/{item_id}/restore", response_model=ItemRead)
+async def restore_item(
+    item_id: UUID,
+    current_user: AuthenticatedUser = Depends(require_roles("ADMIN")),
+    service: ItemService = Depends(get_item_service),
+):
+    item = await service.restore_item(
+        item_id=item_id,
+        actor_user_id=current_user.user_id,
+    )
+    return ItemRead.model_validate(item)

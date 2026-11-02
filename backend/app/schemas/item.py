@@ -33,3 +33,24 @@ class ItemRead(ItemBase):
     id: UUID
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class ItemDeleteResult(BaseModel):
+    id: UUID
+    item_code: str
+    outcome: str  # "DELETED" | "ARCHIVED"
+    message: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ItemBulkDeleteRequest(BaseModel):
+    item_ids: list[UUID] = Field(..., min_length=1)
+
+
+class ItemBulkDeleteResult(BaseModel):
+    deleted_count: int
+    archived_count: int
+    results: list[ItemDeleteResult]
+
+    model_config = ConfigDict(from_attributes=True)

@@ -57,6 +57,19 @@ export interface Item {
   category?: Category
 }
 
+export interface ItemDeleteResult {
+  id: string
+  item_code: string
+  outcome: 'DELETED' | 'ARCHIVED'
+  message?: string
+}
+
+export interface ItemBulkDeleteResult {
+  deleted_count: number
+  archived_count: number
+  results: ItemDeleteResult[]
+}
+
 export interface InventoryBalance {
   id?: string
   warehouse_id: string

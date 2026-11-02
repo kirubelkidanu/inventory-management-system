@@ -123,3 +123,22 @@ Status: APPROVED
    - Opening balances are posted through `TransactionService.create_and_post_opening_balance` under single atomic PostgreSQL transactions.
    - Headers use `transaction_type = 'ADJUSTMENT'`, `adjustment_reason = 'Opening Balance'`, and `external_reference = 'OPENING_BALANCE'`.
    - Inventory quantities update `inventory_balances` with row-level locks (`SELECT FOR UPDATE`) and append immutable `IN` records to `stock_movements`.
+
+---
+
+## ADR-010 — Ledger-Safe Item Deletion and Soft Archival (Option A)
+
+Status: APPROVED
+
+1. Referential Integrity & Invariant Protection:
+   - Items in the master catalog (items) cannot be hard-deleted if they are referenced by historical ledger records (	ransaction_lines, stock_movements, 	ransfer_lines) or hold non-zero stock (inventory_balances.quantity_on_hand > 0 or quantity_reserved > 0).
+   - If referenced or holding stock, attempting to delete the item safely transitions it to is_active = FALSE (soft-archived) and records an AuditLog entry (ction='UPDATE').
+   - If completely unused (zero references and only zero-quantity balance records, if any), the zero-quantity balances are pruned first and the item is permanently deleted (ction='DELETE').
+
+2. Role-Based Access Control:
+   - Only users with the ADMIN role are permitted to delete or bulk-delete items (DELETE /api/v1/items/{item_id} and POST /api/v1/items/bulk-delete) or restore archived items (PATCH /api/v1/items/{item_id}/restore).
+   - Non-admin roles (STORE_KEEPER, INVENTORY_MANAGER, VIEWER) receive 403 Forbidden.
+
+3. Catalog Listing & Search:
+   - GET /api/v1/items defaults to returning only active items (is_active = TRUE).
+   - An explicit include_inactive=true query parameter exposes archived items for administrative audits and restoration.

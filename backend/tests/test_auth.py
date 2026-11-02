@@ -198,7 +198,7 @@ async def test_auth_me_with_valid_token():
 @pytest.mark.asyncio
 async def test_issued_token_authenticates_protected_endpoints():
     class DummyItemService:
-        async def list_items(self):
+        async def list_items(self, *args, **kwargs):
             return []
 
     from app.api.routes.items import get_item_service
