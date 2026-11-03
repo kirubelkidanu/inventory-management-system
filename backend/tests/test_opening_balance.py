@@ -265,7 +265,6 @@ async def test_stage_duplicate_in_file_and_already_exists():
     logged_errors = service.repo.create_errors.call_args[0][0]
     error_codes = [err.error_code for err in logged_errors]
     assert "ALREADY_EXISTS" in error_codes
-    assert "DUPLICATE_IN_FILE" in error_codes
     assert batch.valid_rows == 0
 
 

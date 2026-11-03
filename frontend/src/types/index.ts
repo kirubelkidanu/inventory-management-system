@@ -397,6 +397,10 @@ export interface InitialStockStagedRow {
   unit_price: number | string
   total_price: number | string
   remarks?: string | null
+  is_merged?: boolean
+  merged_count?: number
+  merged_rows?: number[]
+  merge_note?: string | null
 }
 
 export interface InitialStockBatchPreviewResponse {

@@ -47,6 +47,79 @@ def generate_batch_number(prefix: str) -> str:
     return f"{prefix}-{date_str}-{suffix}"
 
 
+# Canonical UOM Synonym Groups per specification:
+# Volume: {'ltr', 'liter', 'litre', 'liters', 'litres', 'l'} -> maps to canonical 'Liter' / 'Ltr'
+# Count: {'pcs', 'pc', 'piece', 'pieces', 'ea', 'each', 'no', 'number'} -> maps to canonical 'Pcs' / 'PCS'
+# Weight: {'kg', 'kgs', 'kilogram', 'kilograms'} -> maps to canonical 'Kg' / 'KG'
+# Area: {'m2', 'sqm', 'm^2', 'sq.m', 'square meter'} -> maps to canonical 'M2'
+# Length: {'m', 'mtr', 'meter', 'meters'} -> maps to canonical 'MTR' / 'Meter'
+# Packaging: {'bag', 'bags'} -> 'BAG'; {'roll', 'rolls'} -> 'ROLL'; {'pkt', 'packet', 'packets'} -> 'Pkt'
+# Mass: {'qtl', 'quintal', 'quintals'} -> 'Qtl'
+UOM_SYNONYM_GROUPS: List[Set[str]] = [
+    # Volume
+    {"ltr", "liter", "litre", "liters", "litres", "l"},
+    # Count
+    {"pcs", "pc", "piece", "pieces", "ea", "each", "no", "number"},
+    # Weight
+    {"kg", "kgs", "kilogram", "kilograms"},
+    # Area
+    {"m2", "sqm", "m^2", "sq.m", "square meter"},
+    # Length
+    {"m", "mtr", "meter", "meters"},
+    # Packaging
+    {"bag", "bags"},
+    {"roll", "rolls"},
+    {"pkt", "packet", "packets"},
+    # Mass
+    {"qtl", "quintal", "quintals"},
+]
+
+UOM_SYNONYM_LOOKUP: Dict[str, int] = {}
+for _group_idx, _synonyms in enumerate(UOM_SYNONYM_GROUPS):
+    for _syn in _synonyms:
+        UOM_SYNONYM_LOOKUP[_syn.strip().lower()] = _group_idx
+
+
+def resolve_canonical_uom(
+    raw_uom: Optional[str],
+    item_default_unit: Optional[str],
+) -> Tuple[str, bool]:
+    """
+    Validates and maps raw UOM against the item's default unit.
+    Returns (resolved_uom, is_valid).
+
+    Validation & Mapping Rules:
+    a. If raw cell UOM is blank or whitespace, default safely to item.default_unit.
+    b. Perform case-insensitive match: if raw_uom.strip().lower() == item.default_unit.strip().lower(), accept as valid.
+    c. Check synonym dictionary: if raw_uom and item.default_unit belong to the same canonical synonym group,
+       accept as valid and assign item.default_unit.
+    d. Only if there is an unresolvable dimensional conflict (e.g., 'KG' vs 'Pkt' or 'roll' vs 'KG')
+       without an explicit conversion factor, log an INVALID_UOM error.
+    """
+    clean_raw = str(raw_uom or "").strip()
+    clean_default = str(item_default_unit or "").strip()
+
+    # Rule a: If raw cell UOM is blank or whitespace, default safely to item.default_unit
+    if not clean_raw:
+        return clean_default or "PCS", True
+
+    if not clean_default:
+        return clean_raw, True
+
+    # Rule b: Case-insensitive match
+    if clean_raw.lower() == clean_default.lower():
+        return clean_default, True
+
+    # Rule c: Check synonym dictionary
+    raw_idx = UOM_SYNONYM_LOOKUP.get(clean_raw.lower())
+    default_idx = UOM_SYNONYM_LOOKUP.get(clean_default.lower())
+    if raw_idx is not None and default_idx is not None and raw_idx == default_idx:
+        return clean_default, True
+
+    # Rule d: Dimensional conflict
+    return clean_raw, False
+
+
 class ImportService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -622,9 +695,7 @@ class ImportService:
         projects_map = await self.repo.get_projects_by_codes(candidate_proj_codes)
 
         import_errors: List[ImportError] = []
-        valid_rows: List[Dict[str, Any]] = []
-        seen_items_in_file: Set[str] = set()
-        seen_wh_item_pairs: Set[Tuple[str, str]] = set()
+        unaggregated_valid_rows: List[Dict[str, Any]] = []
 
         for row_number, row_data in raw_rows:
             row_has_error = False
@@ -715,26 +786,7 @@ class ImportService:
                     )
                     row_has_error = True
 
-            # In-file duplicate checking
-            if item_code and wh_code:
-                pair = (wh_code.upper(), item_code.upper())
-                if pair in seen_wh_item_pairs:
-                    err_code = "DUPLICATE_IN_FILE" if (target_wh is not None and not raw_wh_code) else "DUPLICATE_ENTRY"
-                    import_errors.append(
-                        ImportError(
-                            id=uuid.uuid4(),
-                            batch_id=batch_id,
-                            row_number=row_number,
-                            column_name="item_code",
-                            raw_value=item_code,
-                            error_code=err_code,
-                            error_message=f"Duplicate entry for warehouse '{wh_code}' and item '{item_code}' in file.",
-                            created_at=now_utc,
-                        )
-                    )
-                    row_has_error = True
-                else:
-                    seen_wh_item_pairs.add(pair)
+# Duplicate checking removed: multiple rows with the same SKU are merged below per ADR-006
 
             # Pre-existing balance checking
             if matched_item is not None and matched_wh is not None:
@@ -801,29 +853,30 @@ class ImportService:
                     )
                     row_has_error = True
 
-            # Unit validation & fallback
-            if not unit:
-                if matched_item is not None:
-                    unit = matched_item.default_unit
-                else:
-                    unit = "PCS"
-            elif matched_item is not None and unit.upper() != matched_item.default_unit.upper():
-                import_errors.append(
-                    ImportError(
-                        id=uuid.uuid4(),
-                        batch_id=batch_id,
-                        row_number=row_number,
-                        column_name="unit",
-                        raw_value=unit,
-                        error_code="INVALID_UOM",
-                        error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
-                        created_at=now_utc,
+            # Unit validation & fallback using canonical UOM synonyms
+            if matched_item is not None:
+                resolved_unit, uom_valid = resolve_canonical_uom(unit, matched_item.default_unit)
+                if not uom_valid:
+                    import_errors.append(
+                        ImportError(
+                            id=uuid.uuid4(),
+                            batch_id=batch_id,
+                            row_number=row_number,
+                            column_name="unit",
+                            raw_value=unit,
+                            error_code="INVALID_UOM",
+                            error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
+                            created_at=now_utc,
+                        )
                     )
-                )
-                row_has_error = True
+                    row_has_error = True
+                unit = resolved_unit
+            else:
+                unit = unit or "PCS"
 
             # Unit Price validation & defaulting to 0.0000
             parsed_price = Decimal("0.0000")
+            has_explicit_price = False
             if raw_unit_price is not None and str(raw_unit_price).strip() != "":
                 try:
                     parsed_price = Decimal(str(raw_unit_price).strip())
@@ -841,6 +894,8 @@ class ImportService:
                             )
                         )
                         row_has_error = True
+                    else:
+                        has_explicit_price = True
                 except Exception:
                     import_errors.append(
                         ImportError(
@@ -883,7 +938,7 @@ class ImportService:
                 and matched_item is not None
                 and parsed_qty is not None
             ):
-                valid_rows.append(
+                unaggregated_valid_rows.append(
                     {
                         "row_number": row_number,
                         "warehouse_id": str(matched_wh.id),
@@ -892,13 +947,101 @@ class ImportService:
                         "item_id": str(matched_item.id),
                         "item_code": matched_item.item_code,
                         "item_name": matched_item.description,
+                        "item_description": matched_item.description,
                         "project_id": str(matched_proj.id) if matched_proj else None,
                         "project_code": matched_proj.code if matched_proj else None,
-                        "quantity": str(parsed_qty),
+                        "quantity": parsed_qty,
                         "unit": unit,
-                        "unit_price": str(raw_unit_price).strip() if (raw_unit_price is not None and str(raw_unit_price).strip()) else str(parsed_price),
-                        "total_price": str((parsed_qty * parsed_price).quantize(Decimal("0.0001"))),
+                        "unit_price": parsed_price,
+                        "has_explicit_price": has_explicit_price,
                         "remarks": row_remarks,
+                    }
+                )
+
+        # Group and aggregate valid rows by (warehouse_id, item_id) to strictly uphold ADR-006
+        grouped_candidates: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for cand in unaggregated_valid_rows:
+            key = (cand["warehouse_id"], cand["item_id"])
+            grouped_candidates.setdefault(key, []).append(cand)
+
+        valid_rows: List[Dict[str, Any]] = []
+
+        for (wh_id_str, item_id_str), group in grouped_candidates.items():
+            if len(group) == 1:
+                r = group[0]
+                qty = r["quantity"]
+                price = r["unit_price"]
+                total_line_price = (qty * price).quantize(Decimal("0.0001"))
+                valid_rows.append(
+                    {
+                        "row_number": r["row_number"],
+                        "warehouse_id": r["warehouse_id"],
+                        "warehouse_code": r["warehouse_code"],
+                        "warehouse_name": r.get("warehouse_name"),
+                        "item_id": r["item_id"],
+                        "item_code": r["item_code"],
+                        "item_name": r.get("item_name"),
+                        "item_description": r.get("item_description") or r.get("item_name"),
+                        "project_id": r.get("project_id"),
+                        "project_code": r.get("project_code"),
+                        "quantity": str(qty),
+                        "unit": r["unit"],
+                        "unit_price": str(price),
+                        "total_price": str(total_line_price),
+                        "remarks": r.get("remarks"),
+                        "is_merged": False,
+                        "merged_count": 1,
+                        "merged_rows": [r["row_number"]],
+                        "merge_note": None,
+                    }
+                )
+            else:
+                first = group[0]
+                row_numbers = [r["row_number"] for r in group]
+                total_qty = sum((r["quantity"] for r in group), Decimal("0"))
+
+                # Pricing calculation per requirement:
+                # "If unit_price is provided on multiple rows, calculate the weighted average unit price:
+                #  sum(qty * price) / sum(qty). If only one row has price, retain that price."
+                priced_rows = [r for r in group if r["has_explicit_price"] and r["unit_price"] > Decimal("0")]
+                if len(priced_rows) == 0:
+                    avg_unit_price = Decimal("0.0000")
+                elif len(priced_rows) == 1:
+                    avg_unit_price = priced_rows[0]["unit_price"].quantize(Decimal("0.0001"))
+                else:
+                    weighted_sum = sum((r["quantity"] * r["unit_price"] for r in priced_rows), Decimal("0"))
+                    weighted_qty = sum((r["quantity"] for r in priced_rows), Decimal("0"))
+                    if weighted_qty > Decimal("0"):
+                        avg_unit_price = (weighted_sum / weighted_qty).quantize(Decimal("0.0001"))
+                    else:
+                        avg_unit_price = Decimal("0.0000")
+
+                total_line_price = (total_qty * avg_unit_price).quantize(Decimal("0.0001"))
+                row_nums_str = ", ".join(f"#{num}" for num in row_numbers)
+                merge_note = f"Merged {len(group)} rows (rows: {row_nums_str}) with total quantity {total_qty}"
+                combined_remarks = "; ".join(filter(None, [r.get("remarks") for r in group])) or merge_note
+
+                valid_rows.append(
+                    {
+                        "row_number": first["row_number"],
+                        "warehouse_id": first["warehouse_id"],
+                        "warehouse_code": first["warehouse_code"],
+                        "warehouse_name": first.get("warehouse_name"),
+                        "item_id": first["item_id"],
+                        "item_code": first["item_code"],
+                        "item_name": first.get("item_name"),
+                        "item_description": first.get("item_description") or first.get("item_name"),
+                        "project_id": first.get("project_id"),
+                        "project_code": first.get("project_code"),
+                        "quantity": str(total_qty),
+                        "unit": first["unit"],
+                        "unit_price": str(avg_unit_price),
+                        "total_price": str(total_line_price),
+                        "remarks": combined_remarks,
+                        "is_merged": True,
+                        "merged_count": len(group),
+                        "merged_rows": row_numbers,
+                        "merge_note": merge_note,
                     }
                 )
 

@@ -1,6 +1,7 @@
 # backend/tests/test_imports.py
 import csv
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 import io
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -1080,3 +1081,254 @@ async def test_initial_stock_commit_audit_log_actions_satisfy_check_constraint()
     assert audit_call["entity_type"] == "import_batch"
     assert audit_call["entity_id"] == str(batch.id)
     assert audit_call["actor_user_id"] == user_id
+
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_uom_case_insensitive_match():
+    """Verifies that UOM matching is case-insensitive ('kg' matches 'KG')."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="02-ST-00001",
+        description="Steel Rebar",
+        default_unit="KG",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"02-ST-00001": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["02-ST-00001", "50", "kg", "75.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="uom_case.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["unit"] == "KG"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_uom_synonyms_mapping():
+    """Verifies that canonical UOM synonyms map correctly ('ltr' -> 'Liter', 'pcs' -> 'Pcs', etc.)."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item_paint = Item(id=uuid4(), item_code="07-PC-00001", description="Paint", default_unit="Liter", is_active=True)
+    item_bolts = Item(id=uuid4(), item_code="05-HW-00001", description="Bolts", default_unit="Pcs", is_active=True)
+    item_tiles = Item(id=uuid4(), item_code="04-TL-00001", description="Ceramic Tiles", default_unit="M2", is_active=True)
+    item_cement = Item(id=uuid4(), item_code="01-CM-00001", description="Cement", default_unit="BAG", is_active=True)
+    item_grain = Item(id=uuid4(), item_code="09-AG-00001", description="Bulk Lime", default_unit="Qtl", is_active=True)
+
+    items_map = {
+        "07-PC-00001": item_paint,
+        "05-HW-00001": item_bolts,
+        "04-TL-00001": item_tiles,
+        "01-CM-00001": item_cement,
+        "09-AG-00001": item_grain,
+    }
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value=items_map)
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["07-PC-00001", "20", "ltr", "120.00"],
+        ["05-HW-00001", "100", "pieces", "5.50"],
+        ["04-TL-00001", "45", "sqm", "350.00"],
+        ["01-CM-00001", "80", "bags", "550.00"],
+        ["09-AG-00001", "10", "quintal", "1800.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="uom_synonyms.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 5
+    assert batch.error_rows == 0
+    units_by_sku = {r["item_code"]: r["unit"] for r in batch.staged_data["rows"]}
+    assert units_by_sku["07-PC-00001"] == "Liter"
+    assert units_by_sku["05-HW-00001"] == "Pcs"
+    assert units_by_sku["04-TL-00001"] == "M2"
+    assert units_by_sku["01-CM-00001"] == "BAG"
+    assert units_by_sku["09-AG-00001"] == "Qtl"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_blank_uom_falls_back_to_default_unit():
+    """Verifies that blank/whitespace UOM defaults safely to item.default_unit."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(id=item_id, item_code="01-CM-00001", description="Cement", default_unit="BAG", is_active=True)
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"01-CM-00001": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["01-CM-00001", "150", "", "550.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="blank_uom.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.staged_data["rows"][0]["unit"] == "BAG"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_dimensional_mismatch_logs_invalid_uom():
+    """Verifies that true dimensional conflict ('KG' vs 'Pkt') logs INVALID_UOM error."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(id=item_id, item_code="05-HW-00002", description="Small Screws", default_unit="Pkt", is_active=True)
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"05-HW-00002": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["05-HW-00002", "10", "KG", "80.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="mismatch_uom.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.valid_rows == 0
+    assert batch.error_rows == 1
+    logged_errors = service.repo.create_errors.call_args[0][0]
+    assert any(err.error_code == "INVALID_UOM" for err in logged_errors)
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_merges_duplicate_skus_and_calculates_weighted_price():
+    """
+    Verifies that multiple rows with the same SKU merge into a single line with
+    summed quantity and weighted average price, satisfying ADR-006.
+    """
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+    wh = Warehouse(id=wh_id, code="KZ-WH-001", name="Kazanchis Store", is_active=True)
+    item = Item(id=item_id, item_code="01-CM-00001", description="Cement 42.5N", default_unit="BAG", is_active=True)
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"01-CM-00001": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+    service.repo.get_batch_by_id = AsyncMock()
+    service.repo.update_batch = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+
+    # Row 2: 10 BAG @ 100 ETB
+    # Row 3: 20 BAG @ 250 ETB
+    # Weighted average price: (10*100 + 20*250) / 30 = 6000 / 30 = 200.0000
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["01-CM-00001", "10", "BAG", "100.00"],
+        ["01-CM-00001", "20", "BAG", "250.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=user_id,
+        file_name="merge_skus.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1  # 2 rows aggregated into 1
+    assert batch.error_rows == 0
+
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["item_code"] == "01-CM-00001"
+    assert Decimal(staged_row["quantity"]) == Decimal("30")
+    assert Decimal(staged_row["unit_price"]) == Decimal("200.0000")
+    assert Decimal(staged_row["total_price"]) == Decimal("6000.0000")
+    assert staged_row["is_merged"] is True
+    assert staged_row["merged_count"] == 2
+    assert staged_row["merged_rows"] == [1, 2]
+    assert "Merged 2 rows" in staged_row["merge_note"]
+    assert "30" in staged_row["merge_note"]
+
+    # Now verify commit routes with exactly 1 line satisfying ADR-006 UNIQUE(transaction_id, item_id)
+    service.repo.get_batch_by_id = AsyncMock(return_value=batch)
+    mock_tx = Transaction(
+        id=uuid4(),
+        transaction_number="ADJ-20261103-MERGE01",
+        transaction_type="ADJUSTMENT",
+        status="POSTED",
+        transaction_date=date.today(),
+        warehouse_id=wh_id,
+        created_by=user_id,
+    )
+    service.tx_service.create_and_post_opening_balance = AsyncMock(return_value=mock_tx)
+
+    result = await service.commit_initial_stock_import(user_id=user_id, batch_id=batch.id)
+    assert result["batch_id"] == batch.id
+
+    service.tx_service.create_and_post_opening_balance.assert_awaited_once()
+    ob_call = service.tx_service.create_and_post_opening_balance.await_args[1]["payload"]
+    assert len(ob_call.lines) == 1
+    assert ob_call.lines[0].item_id == item_id
+    assert ob_call.lines[0].quantity == Decimal("30")
+    assert ob_call.lines[0].unit_price == Decimal("200.0000")

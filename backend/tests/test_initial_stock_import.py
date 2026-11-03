@@ -341,7 +341,15 @@ async def test_stage_validation_errors_warehouse_item_quantity_duplicate():
     assert "INVALID_ITEM" in error_codes
     assert "INVALID_QUANTITY" in error_codes
     assert "INVALID_UOM" in error_codes
-    assert "DUPLICATE_ENTRY" in error_codes
+    assert "DUPLICATE_ENTRY" not in error_codes
+
+    # Verify duplicate rows 7 and 8 were merged into a single line
+    assert batch.valid_rows == 1
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["item_code"] == "01-CM-00001"
+    assert staged_row["quantity"] == "150"
+    assert staged_row["is_merged"] is True
+    assert staged_row["merged_count"] == 2
 
 
 @pytest.mark.asyncio

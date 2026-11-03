@@ -784,8 +784,31 @@ export const OpeningBalancePage: React.FC = () => {
                         ) : (
                           previewData.valid_rows_sample.map((r, idx) => (
                             <tr key={idx} className="hover:bg-slate-50/50">
-                              <td className="py-2.5 px-4 text-slate-400 font-mono">#{r.row_number}</td>
-                              <td className="py-2.5 px-4 font-mono font-medium text-blue-700">{r.item_code}</td>
+                              <td className="py-2.5 px-4 text-slate-400 font-mono">
+                                {r.is_merged && r.merged_rows && r.merged_rows.length > 1 ? (
+                                  <span
+                                    title={r.merge_note || `Merged from rows: ${r.merged_rows.map(n => '#' + n).join(', ')}`}
+                                    className="cursor-help font-semibold text-slate-600"
+                                  >
+                                    #{r.row_number}*
+                                  </span>
+                                ) : (
+                                  `#${r.row_number}`
+                                )}
+                              </td>
+                              <td className="py-2.5 px-4 font-mono font-medium text-blue-700">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span>{r.item_code}</span>
+                                  {r.is_merged && (
+                                    <span
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 cursor-help"
+                                      title={r.merge_note || (r.merged_rows ? `Merged from rows: ${r.merged_rows.map(n => '#' + n).join(', ')}` : 'Merged multiple rows')}
+                                    >
+                                      Merged ({r.merged_count || r.merged_rows?.length || 2} rows)
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               <td className="py-2.5 px-4 text-slate-600 truncate max-w-xs">{r.item_description || '—'}</td>
                               <td className="py-2.5 px-4 text-right font-semibold text-slate-900">
                                 {parseFloat(String(r.quantity)).toLocaleString()}

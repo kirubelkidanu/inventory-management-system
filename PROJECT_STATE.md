@@ -744,3 +744,40 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Stock Invariant Verification**: All stock deductions, movements, and reconciliation checks remain 100% in balance.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+
+---
+
+## 2026-11-03 — Opening Balance Canonical UOM Auto-Mapping & Duplicate SKU Merging (ADR-006 Compliance)
+
+### 1. Architectural Scope & Implementation
+- **Canonical UOM Synonym Auto-Mapping (`backend/app/services/import_.py`)**:
+  * Implemented `UOM_SYNONYM_GROUPS` and `UOM_SYNONYM_LOOKUP` covering Volume (`ltr`, `liter`, `litre`, etc.), Count (`pcs`, `pc`, `piece`, `pieces`, `ea`, `each`, `no`), Weight (`kg`, `kgs`, `kilogram`), Area (`m2`, `sqm`, `m^2`), Length (`m`, `mtr`, `meter`), Packaging (`bag`, `roll`, `pkt`), and Mass (`qtl`, `quintal`).
+  * Created `resolve_canonical_uom(raw_uom, item_default_unit)` strictly following rules:
+    - Rule a: If raw cell UOM is blank or whitespace, default safely to `item.default_unit`.
+    - Rule b: Case-insensitive matching accepts equivalent case (e.g., `kg` matches `KG`).
+    - Rule c: Synonym group mapping maps synonym variants to `item.default_unit` (e.g., `ltr` matches `Liter`, `pcs` matches `Pcs`).
+    - Rule d: True dimensional conflicts (e.g., `KG` vs `Pkt`) log `INVALID_UOM` in `import_errors`.
+- **Duplicate SKU Aggregation & Merging per ADR-006 (`backend/app/services/import_.py`)**:
+  * Removed row-level rejection on in-file duplicate SKUs (`DUPLICATE_IN_FILE` / `DUPLICATE_ENTRY`).
+  * After initial validation, grouped all valid row candidates by `(warehouse_id, item_id)`:
+    - Sums total line quantity: `total_qty = sum(quantities)`.
+    - Computes weighted average unit price: `sum(qty * price) / sum(qty)` when multiple rows have prices; retains single price if only one row provides a price; defaults to `0.0000` if omitted.
+    - Sets `is_merged = True`, `merged_count = N`, `merged_rows = [row_numbers]`, and `merge_note = f"Merged {N} rows (rows: #r1, #r2) with total quantity {total_qty}"`.
+  * Guarantees that `staged_data["rows"]` outputs exactly one line per item/warehouse, strictly fulfilling database constraint `UNIQUE(transaction_id, item_id)` (ADR-006) during atomic opening balance posting.
+- **Frontend Staging Preview Alignment (`frontend/src/features/inventory/OpeningBalancePage.tsx`, `frontend/src/types/index.ts`)**:
+  * Extended `InitialStockStagedRow` interface with `is_merged`, `merged_count`, `merged_rows`, and `merge_note`.
+  * Updated "Valid Stock Lines" table to display `Merged (N rows)` badge with tooltip indicating source spreadsheet row numbers, and display `#{row_number}*` row indicator.
+  * Preserved canonical UOM display resolving to `item.default_unit`.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 259 passed in 4.53s across 16 test modules (100% passing).
+  * Added `test_stage_initial_stock_uom_case_insensitive_match` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_uom_synonyms_mapping` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_blank_uom_falls_back_to_default_unit` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_dimensional_mismatch_logs_invalid_uom` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_merges_duplicate_skus_and_calculates_weighted_price` in `backend/tests/test_imports.py`.
+  * Updated `backend/tests/test_initial_stock_import.py` and `backend/tests/test_opening_balance.py` to assert duplicate row merging behavior.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
