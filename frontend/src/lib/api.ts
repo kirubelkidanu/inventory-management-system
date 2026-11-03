@@ -1,6 +1,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api/v1'
+const rawBaseUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api/v1'
+const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '')
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -10,12 +11,16 @@ export const api = axios.create({
   timeout: 120000,
 })
 
-// Request Interceptor: Attach JWT Bearer Token
+// Request Interceptor: Attach JWT Bearer Token and sanitize URLs to avoid double slashes
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('access_token')
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
+    }
+    if (config.url) {
+      // Prevent unintended double slashes (e.g. //opening-balance -> /opening-balance)
+      config.url = config.url.replace(/^\/\/+/, '/')
     }
     return config
   },

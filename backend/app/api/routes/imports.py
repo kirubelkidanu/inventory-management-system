@@ -154,16 +154,34 @@ async def commit_batch(
     service: ImportService = Depends(get_import_service),
 ):
     user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
-    batch = await service.repo.get_batch_by_id(batch_id)
-    if batch and batch.import_type == "INITIAL_STOCK":
-        return await service.commit_initial_stock_import(
-            user_id=user_id,
-            batch_id=batch_id,
+    try:
+        batch = None
+        if hasattr(service, "repo") and hasattr(service.repo, "get_batch_by_id"):
+            batch = await service.repo.get_batch_by_id(batch_id)
+        if batch and getattr(batch, "import_type", None) == "INITIAL_STOCK":
+            return await service.commit_initial_stock_import(
+                user_id=user_id,
+                batch_id=batch_id,
+            )
+        if hasattr(service, "commit_item_master_import"):
+            return await service.commit_item_master_import(
+                user_id=user_id,
+                batch_id=batch_id,
+            )
+        elif hasattr(service, "commit_batch"):
+            return await service.commit_batch(
+                user_id=user_id,
+                batch_id=batch_id,
+            )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to commit import batch: {str(e)}",
         )
-    return await service.commit_item_master_import(
-        user_id=user_id,
-        batch_id=batch_id,
-    )
 
 
 @router.post(
@@ -262,10 +280,20 @@ async def commit_initial_stock_batch(
     service: ImportService = Depends(get_import_service),
 ):
     user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
-    return await service.commit_initial_stock_import(
-        user_id=user_id,
-        batch_id=batch_id,
-    )
+    try:
+        return await service.commit_initial_stock_import(
+            user_id=user_id,
+            batch_id=batch_id,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to commit initial stock import: {str(e)}",
+        )
 
 @router.post(
     "/initial-stock/stage",

@@ -663,3 +663,31 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Ledger Discrepancies**: Verified `vw_reconciliation_discrepancies` remains at 0 discrepancies.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-03 — CORS Hardening, Exception Header Preservation, and Double-Slash Prevention on Opening Balance
+
+### 1. Architectural Scope & Implementation
+- **CORS Hardening & Allowed Origins (`backend/app/core/config.py`, `backend/app/main.py`)**:
+  * Added `https://inventory.moderngebeya.com` and `http://inventory.moderngebeya.com` directly into the default `CORS_ORIGINS` in `Settings`.
+  * Added support for `BACKEND_CORS_ORIGINS` and `ALLOWED_ORIGINS` environment variables, aggregating all origin sources into a normalized, clean, deduplicated `cors_origins_list` with trailing slashes stripped.
+  * Configured `CORSMiddleware` with `allow_origins=settings.cors_origins_list`, `allow_credentials=True`, `allow_methods=["*"]`, `allow_headers=["*"]`, and `expose_headers=["*", "X-Total-Count"]`.
+  * Updated `unhandled_exception_handler` in `main.py` to dynamically attach CORS response headers (`Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials`, `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`) whenever an incoming request carries an allowed `Origin` header. This prevents the browser from masking 4xx/5xx exceptions as opaque "Network Error: Failed to reach the server. Please check your connection or CORS configuration".
+- **Opening Balance Endpoint Hardening (`backend/app/api/routes/`)**:
+  * Corrected Python syntax in `backend/app/api/routes/inventory.py` ensuring `from __future__ import annotations` is the initial statement.
+  * Added `try ... except ValueError as e: raise HTTPException(status_code=400, detail=str(e))` and catch-all `HTTPException` error wrappers across `imports.py` (`commit_batch`, `commit_initial_stock_batch`), `inventory.py` (`create_inventory_opening_balance`), and `transactions.py` (`create_opening_balance`).
+  * Ensured both `/opening-balance` and `/opening-balance/` decorators are registered on the FastAPI routers to prevent Starlette 307 Temporary Redirects.
+  * In `TransactionService.create_and_post_opening_balance`, added safe type checking for `refreshed` (`isinstance(refreshed, Transaction)`) so both mock testing and live database transactions return a valid `Transaction` model.
+- **Frontend URL Normalization & Query Invalidation (`frontend/src/lib/api.ts`, `frontend/src/features/inventory/useInventoryData.ts`)**:
+  * Stripped trailing slashes from `API_BASE_URL` in `frontend/src/lib/api.ts` to prevent unintentional double slashes (`//opening-balance`).
+  * Added request interceptor rule in `api.ts` replacing leading double-slashes (`^//+`) with a single `/`.
+  * Updated `useCommitInitialStock` and `useCreateManualOpeningBalance` mutation hooks to invalidate `['inventory-balances']`, `['trial-balance']`, `['transactions']`, `['import-batches']`, `['initial-stock-batches']`, and `['opening-balance-transactions']`.
+- **Automated Test Coverage (`backend/tests/test_opening_balance.py`)**:
+  * Added `test_cors_preflight_and_origin_headers`: Verifies preflight OPTIONS and response CORS headers for `https://inventory.moderngebeya.com` and `http://localhost:5173`.
+  * Added `test_opening_balance_no_307_redirect_with_trailing_slash`: Verifies both `/api/v1/transactions/opening-balance` and `/api/v1/transactions/opening-balance/` return 201 with correct CORS headers and no 307 temporary redirects.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 250 passed in 3.59s across 16 test modules (100% passing).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

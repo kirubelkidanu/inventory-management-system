@@ -1,5 +1,3 @@
-from app.schemas.transaction import OpeningBalanceCreate, TransactionRead
-from app.services.transaction import TransactionService
 from __future__ import annotations
 
 import inspect
@@ -17,8 +15,10 @@ from app.schemas.inventory import (
     ReconciliationData,
     StockMovementRead,
 )
+from app.schemas.transaction import OpeningBalanceCreate, TransactionRead
 from app.security.auth import get_current_user as auth_get_current_user
 from app.services.inventory import InventoryService
+from app.services.transaction import TransactionService
 
 router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
@@ -160,11 +160,18 @@ async def create_inventory_opening_balance(
         raise HTTPException(status_code=403, detail="Forbidden. Insufficient permissions.")
     user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
     service = TransactionService(db)
-    return await service.create_and_post_opening_balance(
-        user_id=user_id,
-        warehouse_id=payload.warehouse_id,
-        project_id=payload.project_id,
-        transaction_date=payload.transaction_date,
-        remarks=payload.remarks,
-        lines=payload.lines,
-    )
+    try:
+        return await service.create_and_post_opening_balance(
+            user_id=user_id,
+            warehouse_id=payload.warehouse_id,
+            project_id=payload.project_id,
+            transaction_date=payload.transaction_date,
+            remarks=payload.remarks,
+            lines=payload.lines,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to post opening balance: {str(e)}")

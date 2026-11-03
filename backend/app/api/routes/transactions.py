@@ -211,12 +211,22 @@ async def create_opening_balance(
     service: TransactionService = Depends(get_transaction_service),
 ):
     user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
-    return await service.create_and_post_opening_balance(
-        user_id=user_id,
-        warehouse_id=payload.warehouse_id,
-        project_id=payload.project_id,
-        transaction_date=payload.transaction_date,
-        remarks=payload.remarks,
-        lines=payload.lines,
-    )
+    try:
+        return await service.create_and_post_opening_balance(
+            user_id=user_id,
+            warehouse_id=payload.warehouse_id,
+            project_id=payload.project_id,
+            transaction_date=payload.transaction_date,
+            remarks=payload.remarks,
+            lines=payload.lines,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to post opening balance: {str(e)}",
+        )
 

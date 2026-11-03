@@ -48,32 +48,46 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     """
     Catches unhandled errors and returns sanitized error responses to API consumers
     without exposing raw database connection strings, schema names, or stack traces.
+    Attaches CORS headers dynamically so the browser does not mask errors with 'Network Error'.
     """
     if isinstance(exc, StarletteHTTPException):
-        return JSONResponse(
+        response = JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
             headers=getattr(exc, "headers", None),
         )
-    if isinstance(exc, RequestValidationError):
-        return JSONResponse(
+    elif isinstance(exc, RequestValidationError):
+        response = JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={"detail": exc.errors()},
         )
+    else:
+        # Sanitize and log server-side only
+        logger.exception(
+            "Internal server error on %s %s: %s",
+            request.method,
+            request.url.path,
+            str(exc),
+        )
+        response = JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "detail": "An internal server error occurred. Please contact the system administrator."
+            },
+        )
 
-    # Sanitize and log server-side only
-    logger.exception(
-        "Internal server error on %s %s: %s",
-        request.method,
-        request.url.path,
-        str(exc),
-    )
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "detail": "An internal server error occurred. Please contact the system administrator."
-        },
-    )
+    # Attach CORS headers if request contains an Origin header
+    origin = request.headers.get("origin")
+    if origin:
+        allowed = settings.cors_origins_list
+        if origin in allowed or origin.rstrip("/") in allowed or "*" in allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+
+    return response
+
 
 app.include_router(health.router, prefix=settings.API_V1_STR, tags=["health"])
 app.include_router(auth.router, prefix=settings.API_V1_STR, tags=["auth"])

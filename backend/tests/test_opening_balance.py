@@ -468,3 +468,102 @@ async def test_api_stage_and_batches_endpoints(token_factory):
         assert len(batches_res.json()) == 1
 
     app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_and_origin_headers():
+    """Verifies CORS headers for moderngebeya production and localhost origins on opening balance endpoints."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Preflight OPTIONS for moderngebeya domain
+        res_options = await client.options(
+            "/api/v1/transactions/opening-balance",
+            headers={
+                "Origin": "https://inventory.moderngebeya.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        assert res_options.status_code == 200
+        assert res_options.headers.get("access-control-allow-origin") == "https://inventory.moderngebeya.com"
+        assert res_options.headers.get("access-control-allow-credentials") == "true"
+
+        # Preflight OPTIONS for localhost:5173
+        res_opt_local = await client.options(
+            "/api/v1/imports/initial-stock/stage",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        assert res_opt_local.status_code == 200
+        assert res_opt_local.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_no_307_redirect_with_trailing_slash(token_factory):
+    """Verifies both trailing-slash and non-trailing-slash routes return 201/400 without 307 temporary redirect."""
+    token = token_factory(role="ADMIN")
+    mock_tx_service = AsyncMock()
+    fake_tx = Transaction(
+        id=uuid4(),
+        transaction_number="ADJ-20261103-OPEN0001",
+        transaction_type="ADJUSTMENT",
+        status="POSTED",
+        transaction_date=date.today(),
+        warehouse_id=uuid4(),
+        project_id=None,
+        external_reference="OPENING_BALANCE",
+        adjustment_reason="Opening Balance",
+        remarks="Trailing slash test",
+        created_by=uuid4(),
+        created_at=datetime.now(timezone.utc),
+        posted_by=uuid4(),
+        posted_at=datetime.now(timezone.utc),
+    )
+    fake_tx.lines = []
+    mock_tx_service.create_and_post_opening_balance = AsyncMock(return_value=fake_tx)
+    app.dependency_overrides[get_transaction_service] = lambda: mock_tx_service
+
+    payload = {
+        "warehouse_id": str(uuid4()),
+        "transaction_date": str(date.today()),
+        "remarks": "Trailing slash test",
+        "lines": [
+            {
+                "item_id": str(uuid4()),
+                "quantity": 10.0,
+                "unit": "PCS",
+                "unit_price": 100.0,
+            }
+        ],
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Non-trailing slash
+        r1 = await client.post(
+            "/api/v1/transactions/opening-balance",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Origin": "https://inventory.moderngebeya.com",
+            },
+            json=payload,
+        )
+        assert r1.status_code == 201
+        assert r1.headers.get("access-control-allow-origin") == "https://inventory.moderngebeya.com"
+
+        # Trailing slash
+        r2 = await client.post(
+            "/api/v1/transactions/opening-balance/",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Origin": "https://inventory.moderngebeya.com",
+            },
+            json=payload,
+        )
+        assert r2.status_code == 201
+        assert r2.headers.get("access-control-allow-origin") == "https://inventory.moderngebeya.com"
+
+    app.dependency_overrides.clear()

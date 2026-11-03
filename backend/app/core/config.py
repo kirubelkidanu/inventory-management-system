@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,7 +13,9 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = "service-role-key"
     JWT_SECRET: str = "development-secret-key-change-me"
     JWT_ALGORITHM: str = "HS256"
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,https://inventory.moderngebeya.com,http://inventory.moderngebeya.com"
+    BACKEND_CORS_ORIGINS: Optional[str] = None
+    ALLOWED_ORIGINS: Optional[str] = None
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/api/v1"
     PORT: int = 8000
@@ -33,16 +36,35 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        raw = self.CORS_ORIGINS.strip()
-        if raw.startswith("[") and raw.endswith("]"):
-            import json
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    return [str(o).strip() for o in parsed if str(o).strip()]
-            except json.JSONDecodeError:
-                pass
-        return [origin.strip().strip("'\"") for origin in raw.split(",") if origin.strip()]
+        core_origins = [
+            "https://inventory.moderngebeya.com",
+            "http://inventory.moderngebeya.com",
+            "http://localhost:5173",
+            "http://localhost:3000",
+        ]
+        origins_set = {o.rstrip("/") for o in core_origins}
+
+        for raw_source in [self.CORS_ORIGINS, self.BACKEND_CORS_ORIGINS, self.ALLOWED_ORIGINS]:
+            if not raw_source:
+                continue
+            raw = str(raw_source).strip()
+            if raw.startswith("[") and raw.endswith("]"):
+                import json
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        for o in parsed:
+                            if o and str(o).strip():
+                                origins_set.add(str(o).strip().rstrip("/"))
+                        continue
+                except json.JSONDecodeError:
+                    pass
+            for origin in raw.split(","):
+                cleaned = origin.strip().strip("'").strip('"').rstrip("/")
+                if cleaned:
+                    origins_set.add(cleaned)
+
+        return sorted(list(origins_set))
 
 
 @lru_cache
