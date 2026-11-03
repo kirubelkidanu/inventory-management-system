@@ -136,6 +136,11 @@ async def test_service_opening_balance_creates_posted_adjustment():
         movement_date=date.today(),
     )
     service.repo.create_audit_log.assert_called_once()
+    audit_call = service.repo.create_audit_log.call_args[1]
+    assert audit_call["action"] == "POST"
+    assert audit_call["entity_type"] == "transaction"
+    assert audit_call["entity_id"] == str(tx.id)
+    assert audit_call["actor_user_id"] == user_id
     mock_session.commit.assert_awaited_once()
 
 

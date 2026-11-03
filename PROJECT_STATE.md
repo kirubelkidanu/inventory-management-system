@@ -691,3 +691,22 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Backend Tests**: 250 passed in 3.59s across 16 test modules (100% passing).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-03 — Fix CheckViolationError on audit_logs_action_check for Opening Balance
+
+### 1. Architectural Scope & Implementation
+- **Audit Log Constraint Compliance (`backend/app/services/transaction.py`)**:
+  * In `TransactionService.create_and_post_opening_balance`, replaced `action="TRANSACTION_POSTED"` and `entity_type="transactions"` with `action="POST"` and `entity_type="transaction"`.
+  * Fully adheres to `docs/DATABASE.md` Section 2.12 and migration check constraint `audit_logs_action_check` (`CHECK (action IN ('CREATE', 'UPDATE', 'POST', 'CANCEL', 'CORRECT', 'IMPORT', 'DELETE'))`).
+  * Eliminates the `CheckViolationError` thrown when PostgreSQL attempts to insert an audit log with an invalid action verb on opening balance vouchers.
+- **Audit Verification & Test Coverage (`backend/tests/`)**:
+  * Updated `backend/tests/test_opening_balance.py` to assert `audit_call["action"] == "POST"`, `entity_type == "transaction"`, and `entity_id == str(tx.id)`.
+  * Added `test_opening_balance_audit_log_satisfies_check_constraint` in `backend/tests/test_transactions.py` asserting that opening balance creation emits an audit log conforming to the valid action set.
+  * Added `test_initial_stock_commit_audit_log_actions_satisfy_check_constraint` in `backend/tests/test_imports.py` asserting that bulk initial stock commit writes `action="IMPORT"` for the batch and delegates to opening balance posting with `action="POST"`.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 252 passed in 3.87s across 16 test modules (100% passing).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

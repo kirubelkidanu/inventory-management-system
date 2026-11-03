@@ -1309,8 +1309,8 @@ class TransactionService:
 
             await self.repo.create_audit_log(
                 actor_user_id=parsed_user_id,
-                action="TRANSACTION_POSTED",
-                entity_type="transactions",
+                action="POST",
+                entity_type="transaction",
                 entity_id=str(tx.id),
                 before_state=None,
                 after_state={

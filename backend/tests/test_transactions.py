@@ -910,3 +910,59 @@ async def test_service_grv_persists_unit_price_and_computed_total():
     saved_lines = service.repo.create_transaction_lines.await_args[0][0]
     assert len(saved_lines) == 1
     assert saved_lines[0].unit_price == Decimal("350.5000")
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_audit_log_satisfies_check_constraint():
+    """Verifies that opening balance adjustment writes action='POST' conforming to audit_logs_action_check."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    existing_balance = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("0.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={item_id: existing_balance})
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.get_or_create_balance = AsyncMock(return_value=existing_balance)
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+
+    payload = [
+        {
+            "item_id": item_id,
+            "quantity": Decimal("25.0000"),
+            "unit": "BAG",
+            "unit_price": Decimal("600.0000"),
+            "remarks": "Opening balance audit check",
+        }
+    ]
+
+    tx = await service.create_and_post_opening_balance(
+        user_id=user_id,
+        warehouse_id=wh_id,
+        lines=payload,
+    )
+
+    assert tx.status == "POSTED"
+    service.repo.create_audit_log.assert_called_once()
+    audit_call = service.repo.create_audit_log.call_args[1]
+
+    # Verify action satisfies audit_logs_action_check (DATABASE.md Section 2.12)
+    valid_actions = {"CREATE", "UPDATE", "POST", "CANCEL", "CORRECT", "IMPORT", "DELETE"}
+    assert audit_call["action"] == "POST"
+    assert audit_call["action"] in valid_actions
+    assert audit_call["entity_type"] == "transaction"
+    assert audit_call["entity_id"] == str(tx.id)
+    assert audit_call["actor_user_id"] == user_id

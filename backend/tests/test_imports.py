@@ -1,6 +1,6 @@
 # backend/tests/test_imports.py
 import csv
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import io
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -18,6 +18,7 @@ from app.models.category import Category
 from app.models.import_ import ImportBatch, ImportError
 from app.models.item import Item
 from app.models.warehouse import Warehouse
+from app.models.transaction import Transaction
 from app.schemas.import_ import ImportBatchPreview, ImportBatchRead, ImportErrorRead
 from app.services.import_ import ImportService, _to_uuid
 
@@ -1008,3 +1009,74 @@ async def test_stage_initial_stock_headerless_4_column_format():
     assert batch.staged_data["rows"][0]["quantity"] == "410"
     assert batch.staged_data["rows"][1]["item_code"] == "02-ST-00001"
     assert batch.staged_data["rows"][1]["quantity"] == "1755"
+
+
+@pytest.mark.asyncio
+async def test_initial_stock_commit_audit_log_actions_satisfy_check_constraint():
+    """Verifies that initial stock import commit writes action='IMPORT' conforming to audit_logs_action_check."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    batch_id = uuid4()
+    user_id = uuid4()
+    wh_id = uuid4()
+    item_id = uuid4()
+
+    batch = ImportBatch(
+        id=batch_id,
+        batch_number="IMP-STOCK-20261103-AUDIT01",
+        import_type="INITIAL_STOCK",
+        file_name="stock_audit.xlsx",
+        file_size_bytes=2048,
+        total_rows=1,
+        valid_rows=1,
+        error_rows=0,
+        status="VALIDATED",
+        staged_data={
+            "rows": [
+                {
+                    "row_number": 1,
+                    "item_id": str(item_id),
+                    "warehouse_id": str(wh_id),
+                    "quantity": 50.0,
+                    "unit": "PCS",
+                    "unit_price": 200.0,
+                    "status": "VALID",
+                }
+            ]
+        },
+        created_by=user_id,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.get_batch_by_id = AsyncMock(return_value=batch)
+    service.repo.update_batch = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+
+    mock_tx = Transaction(
+        id=uuid4(),
+        transaction_number="ADJ-20261103-AUDIT01",
+        transaction_type="ADJUSTMENT",
+        status="POSTED",
+        transaction_date=date.today(),
+        warehouse_id=wh_id,
+        adjustment_reason="Opening Balance",
+        external_reference="OPENING_BALANCE",
+        created_by=user_id,
+    )
+    service.tx_service.create_and_post_opening_balance = AsyncMock(return_value=mock_tx)
+
+    result = await service.commit_initial_stock_import(user_id=user_id, batch_id=batch_id)
+
+    assert result["batch_id"] == batch_id
+    assert batch.status == "COMPLETED"
+
+    # Verify batch audit log satisfies audit_logs_action_check
+    service.repo.create_audit_log.assert_called_once()
+    audit_call = service.repo.create_audit_log.call_args[1]
+    valid_actions = {"CREATE", "UPDATE", "POST", "CANCEL", "CORRECT", "IMPORT", "DELETE"}
+    assert audit_call["action"] == "IMPORT"
+    assert audit_call["action"] in valid_actions
+    assert audit_call["entity_type"] == "import_batch"
+    assert audit_call["entity_id"] == str(batch.id)
+    assert audit_call["actor_user_id"] == user_id
