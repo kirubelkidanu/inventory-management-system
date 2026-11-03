@@ -113,7 +113,7 @@ class ReportRepository:
             .join(Category, Item.category_id == Category.id)
             .join(Warehouse, StockMovement.warehouse_id == Warehouse.id)
             .outerjoin(Project, StockMovement.project_id == Project.id)
-            .join(User, Transaction.created_by == User.id)
+            .outerjoin(User, Transaction.created_by == User.id)
         )
 
         # 1. Total count
@@ -205,7 +205,7 @@ class ReportRepository:
             .join(Category, Item.category_id == Category.id)
             .join(Warehouse, StockMovement.warehouse_id == Warehouse.id)
             .outerjoin(Project, StockMovement.project_id == Project.id)
-            .join(User, Transaction.created_by == User.id)
+            .outerjoin(User, Transaction.created_by == User.id)
         )
         if conditions:
             stmt = stmt.where(and_(*conditions))
@@ -289,7 +289,7 @@ class ReportRepository:
             .join(Category, Item.category_id == Category.id)
             .join(Warehouse, StockMovement.warehouse_id == Warehouse.id)
             .outerjoin(Project, StockMovement.project_id == Project.id)
-            .join(User, Transaction.created_by == User.id)
+            .outerjoin(User, Transaction.created_by == User.id)
         )
         if conditions:
             stmt = stmt.where(and_(*conditions))

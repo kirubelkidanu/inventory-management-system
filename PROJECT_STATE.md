@@ -638,3 +638,28 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Real File Validation**: Verified against client files `kality p2 begi.xlsx` (33/33 rows parsed) and `kality p2 begi (2).xlsx` (33/33 rows parsed).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+
+---
+
+## 2026-11-03 — Fix Opening Balance Network Error on Commit & Direct Link to Trial Balance Ledger
+
+### 1. Architectural Scope & Implementation
+- **Resolved Network / CORS Errors on Commit (`backend/app/api/routes/`)**:
+  * Root caused the Network Error during "Confirm & Post Opening Balance" and manual entry:
+    1. Attribute expiration on commit: `TransactionService.create_and_post_opening_balance` committed the database session without eagerly reloading lines, causing an internal `MissingGreenlet` exception during FastAPI response serialization to `TransactionRead`. Added `refreshed = await self.repo.get_transaction_by_id(tx_id)` before returning.
+    2. Import commit pre-commit capture: In `ImportService.commit_initial_stock_import`, pre-captured `batch_id`, `batch_number`, and `transaction_numbers` prior to session commit to avoid expired attribute lookups.
+    3. Route trailing slash & path aliases: Fixed route declarations across `imports.py` and `inventory.py` to support with/without trailing slashes and multiple path aliases (`/initial-stock/{batch_id}/commit`, `/initial-stock/commit/{batch_id}`, `/batches/{batch_id}/commit`, `/{batch_id}/commit`, `/opening-balance`, `/opening-balance/`) preventing 307 temporary redirect CORS/Network errors.
+- **Trial Balance Ledger Linkage (`backend/app/repositories/report.py`)**:
+  * Converted `User` join from inner join to `outerjoin(User, Transaction.created_by == User.id)` across both `get_trial_balance` and `get_all_trial_balance_movements`.
+  * Guarantees that opening balance adjustments (`transaction_type='ADJUSTMENT'`, `external_reference='OPENING_BALANCE'`) and initial stock vouchers are consistently displayed in the Trial Balance ledger under their respective warehouse, item SKU, positive IN quantity, unit price, and valuation.
+- **Frontend Error Handling & Query Invalidation (`frontend/src/features/inventory/`, `frontend/src/features/transactions/`)**:
+  * Enhanced `extractErrorMessage` to extract `error.response?.data?.detail`, array validation errors, and meaningful network error messages rather than raw browser exceptions.
+  * Added query invalidations for `['trial-balance']` and `['transactions']` upon successful initial stock commit and manual entry posting.
+  * Added direct "View in Trial Balance" action buttons on both Excel batch commit and manual entry success screens.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 248 passed in 4.34s across 16 test modules (all opening balance and import commit tests passing 100%).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Ledger Discrepancies**: Verified `vw_reconciliation_discrepancies` remains at 0 discrepancies.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

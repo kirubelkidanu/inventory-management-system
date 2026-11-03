@@ -123,7 +123,7 @@ async def get_batch_preview(
 
 @router.post(
     "/batches/{batch_id}/commit",
-    summary="Commit valid staged items from an import batch into the Item Master catalog",
+    summary="Commit valid staged items from an import batch into the Item Master catalog or ledger",
 )
 @router.post(
     "/batches/{batch_id}/commit/",
@@ -137,6 +137,15 @@ async def get_batch_preview(
     "/items/{batch_id}/commit/",
     include_in_schema=False,
 )
+@router.post(
+    "/{batch_id}/commit",
+    summary="Commit valid staged items from an import batch",
+    include_in_schema=False,
+)
+@router.post(
+    "/{batch_id}/commit/",
+    include_in_schema=False,
+)
 async def commit_batch(
     batch_id: uuid.UUID,
     current_user: AuthenticatedUser = Depends(
@@ -145,6 +154,12 @@ async def commit_batch(
     service: ImportService = Depends(get_import_service),
 ):
     user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    batch = await service.repo.get_batch_by_id(batch_id)
+    if batch and batch.import_type == "INITIAL_STOCK":
+        return await service.commit_initial_stock_import(
+            user_id=user_id,
+            batch_id=batch_id,
+        )
     return await service.commit_item_master_import(
         user_id=user_id,
         batch_id=batch_id,
@@ -229,6 +244,14 @@ async def get_initial_stock_preview(
 )
 @router.post(
     "/initial-stock/{batch_id}/commit/",
+    include_in_schema=False,
+)
+@router.post(
+    "/initial-stock/commit/{batch_id}",
+    include_in_schema=False,
+)
+@router.post(
+    "/initial-stock/commit/{batch_id}/",
     include_in_schema=False,
 )
 async def commit_initial_stock_batch(

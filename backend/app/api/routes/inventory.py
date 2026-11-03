@@ -1,3 +1,5 @@
+from app.schemas.transaction import OpeningBalanceCreate, TransactionRead
+from app.services.transaction import TransactionService
 from __future__ import annotations
 
 import inspect
@@ -132,3 +134,37 @@ async def get_reconciliation_discrepancies(
         data = res
     return data
 
+
+
+@router.post(
+    "/opening-balance",
+    response_model=TransactionRead,
+    status_code=201,
+    summary="Create and post an opening balance initial stock voucher directly",
+)
+@router.post(
+    "/opening-balance/",
+    response_model=TransactionRead,
+    status_code=201,
+    include_in_schema=False,
+)
+async def create_inventory_opening_balance(
+    payload: OpeningBalanceCreate,
+    current_user: Any = Depends(get_current_user_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user_role = getattr(current_user, "role", None)
+    if user_role not in ("ADMIN", "INVENTORY_MANAGER"):
+        raise HTTPException(status_code=403, detail="Forbidden. Insufficient permissions.")
+    user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+    service = TransactionService(db)
+    return await service.create_and_post_opening_balance(
+        user_id=user_id,
+        warehouse_id=payload.warehouse_id,
+        project_id=payload.project_id,
+        transaction_date=payload.transaction_date,
+        remarks=payload.remarks,
+        lines=payload.lines,
+    )

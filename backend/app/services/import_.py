@@ -1057,15 +1057,22 @@ class ImportService:
                 reason="Initial Stock Excel Import Commit",
             )
 
+            batch_id_val = batch.id
+            batch_number_val = batch.batch_number
+            staged_rows_count = len(staged_rows)
+            wh_affected_count = len(grouped_by_warehouse)
+            tx_created_count = len(created_transactions)
+            tx_numbers = [t.transaction_number for t in created_transactions]
+
             await self.session.commit()
             return {
                 "message": "Initial stock import completed successfully.",
-                "batch_id": batch.id,
-                "batch_number": batch.batch_number,
-                "imported_rows": len(staged_rows),
-                "warehouses_affected": len(grouped_by_warehouse),
-                "transactions_created": len(created_transactions),
-                "transaction_numbers": [t.transaction_number for t in created_transactions],
+                "batch_id": batch_id_val,
+                "batch_number": batch_number_val,
+                "imported_rows": staged_rows_count,
+                "warehouses_affected": wh_affected_count,
+                "transactions_created": tx_created_count,
+                "transaction_numbers": tx_numbers,
             }
         except Exception:
             await self.session.rollback()

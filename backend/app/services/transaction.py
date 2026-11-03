@@ -1326,9 +1326,11 @@ class TransactionService:
 
             if commit_session:
                 await self.session.commit()
+                refreshed = await self.repo.get_transaction_by_id(tx_id)
+                return refreshed or tx
             else:
                 await self.session.flush()
-            return tx
+                return tx
         except Exception:
             await self.session.rollback()
             raise

@@ -460,6 +460,12 @@ export const OpeningBalancePage: React.FC = () => {
                 >
                   Go to Inventory Balances
                 </Link>
+                <Link
+                  to="/reports/trial-balance"
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 shadow-sm"
+                >
+                  View in Trial Balance
+                </Link>
               </div>
             </div>
           ) : !previewData ? (
@@ -933,6 +939,12 @@ export const OpeningBalancePage: React.FC = () => {
                   className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm"
                 >
                   View in Inventory Balances
+                </Link>
+                <Link
+                  to="/reports/trial-balance"
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 shadow-sm"
+                >
+                  View in Trial Balance
                 </Link>
               </div>
             </div>

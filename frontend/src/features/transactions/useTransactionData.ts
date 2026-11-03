@@ -134,9 +134,19 @@ export function extractErrorMessage(error: any): string {
     if (typeof data.message === 'string') {
       return data.message
     }
+    if (typeof data.error === 'string') {
+      return data.error
+    }
+  }
+
+  if (error.response?.status) {
+    return `Server Error (${error.response.status}): ${error.response.statusText || 'Request failed'}`
   }
 
   if (error.message) {
+    if (error.message === 'Network Error' || error.code === 'ERR_NETWORK') {
+      return 'Network Error: Failed to reach the server. Please check your connection or CORS configuration.'
+    }
     return error.message
   }
 

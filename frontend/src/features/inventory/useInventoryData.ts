@@ -301,6 +301,8 @@ export function useCommitInitialStock() {
       queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
       queryClient.invalidateQueries({ queryKey: ['initial-stock-batches'] })
       queryClient.invalidateQueries({ queryKey: ['opening-balance-transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['trial-balance'] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
     },
   })
 }
@@ -315,6 +317,8 @@ export function useCreateManualOpeningBalance() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory-balances'] })
       queryClient.invalidateQueries({ queryKey: ['opening-balance-transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['trial-balance'] })
+      queryClient.invalidateQueries({ queryKey: ['transactions'] })
     },
   })
 }
