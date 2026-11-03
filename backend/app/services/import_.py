@@ -1204,55 +1204,205 @@ class ImportService:
             "default_unit": get_val("default_unit"),
         }
 
+    @staticmethod
+    def _is_summary_or_signature(val: Any) -> bool:
+        """Checks if a cell value contains summary, total, or signature text that should be skipped."""
+        if val is None:
+            return True
+        s = str(val).strip().lower()
+        if not s:
+            return True
+        summary_prefixes = (
+            "total",
+            "grand total",
+            "subtotal",
+            "sub total",
+            "sum",
+            "approved by",
+            "approved",
+            "prepared by",
+            "prepared",
+            "checked by",
+            "checked",
+            "verified by",
+            "verified",
+            "received by",
+            "received",
+            "authorized by",
+            "authorized",
+            "signature",
+            "sign",
+            "store keeper",
+            "storekeeper",
+            "note",
+            "remark",
+        )
+        for kw in summary_prefixes:
+            if s == kw or s.startswith(f"{kw}:") or s.startswith(f"{kw} :") or s.startswith(f"{kw} "):
+                return True
+        return False
+
+    @staticmethod
+    def _is_valid_initial_stock_header(mapping: Dict[str, int]) -> bool:
+        """A valid stock header MUST contain both item identification and quantity columns."""
+        return "item_code" in mapping and "quantity" in mapping
+
+    @staticmethod
+    def _is_headerless_stock_row(row_cells: Tuple[Any, ...] | List[Any]) -> bool:
+        """
+        Detects if a row represents headerless stock data (e.g. [item_code, quantity, unit, price]).
+        Checks:
+        - at least 2 cells
+        - cell 0 is non-empty string or integer/float (not a title/summary keyword)
+        - cell 1 is numeric > 0
+        """
+        if not row_cells or len(row_cells) < 2:
+            return False
+        c0, c1 = row_cells[0], row_cells[1]
+        if c0 is None or not str(c0).strip():
+            return False
+        s0 = str(c0).strip().lower()
+        if ImportService._is_summary_or_signature(s0):
+            return False
+        if any(s0.startswith(kw) for kw in ("warehouse", "project", "store", "date", "title")):
+            return False
+        try:
+            val = float(str(c1).strip().replace(",", ""))
+            return val > 0
+        except (ValueError, TypeError):
+            return False
+
     def _parse_initial_stock_csv_rows(
         self, file_bytes: bytes
     ) -> List[Tuple[int, Dict[str, Any]]]:
         """Parses initial stock rows from CSV bytes, returning (row_number, row_dict)."""
         text = file_bytes.decode("utf-8-sig", errors="replace")
         stream = io.StringIO(text)
-        reader = csv.reader(stream)
+        reader = list(csv.reader(stream))
 
-        header_map: Dict[str, int] = {}
+        header_map: Optional[Dict[str, int]] = None
+        header_row_idx: Optional[int] = None
+
+        # 1. Search rows 1-15 for a valid header row
+        for r_idx, r_cells in enumerate(reader[:15]):
+            if not r_cells or not any(str(c).strip() for c in r_cells):
+                continue
+            candidate_map = self._detect_initial_stock_headers(r_cells)
+            if self._is_valid_initial_stock_header(candidate_map):
+                header_map = candidate_map
+                header_row_idx = r_idx
+                break
+
+        # 2. Check if headerless
+        if header_map is None:
+            for r_idx, r_cells in enumerate(reader[:15]):
+                if not r_cells or not any(str(c).strip() for c in r_cells):
+                    continue
+                if self._is_headerless_stock_row(r_cells):
+                    header_map = {"item_code": 0, "quantity": 1}
+                    if len(r_cells) > 2 and str(r_cells[2]).strip():
+                        header_map["unit"] = 2
+                    if len(r_cells) > 3 and str(r_cells[3]).strip():
+                        header_map["unit_price"] = 3
+                    header_row_idx = r_idx - 1
+                    break
+
+        if header_map is None or header_row_idx is None:
+            return []
+
         rows: List[Tuple[int, Dict[str, Any]]] = []
+        global_row_counter = 0
 
-        for idx, row in enumerate(reader, start=1):
-            if not row or not any(str(c).strip() for c in row):
-                continue
-            if not header_map:
-                header_map = self._detect_initial_stock_headers(row)
+        for r_idx in range(header_row_idx + 1, len(reader)):
+            r_cells = reader[r_idx]
+            global_row_counter += 1
+            if not r_cells or not any(str(c).strip() for c in r_cells):
                 continue
 
-            row_data = self._extract_initial_stock_row_data(row, header_map)
-            rows.append((idx, row_data))
+            row_data = self._extract_initial_stock_row_data(r_cells, header_map)
+            item_code = row_data.get("item_code")
+            if not item_code or self._is_summary_or_signature(item_code):
+                continue
+
+            rows.append((global_row_counter, row_data))
 
         return rows
 
     def _parse_initial_stock_excel_rows(
         self, file_bytes: bytes
     ) -> List[Tuple[int, Dict[str, Any]]]:
-        """Parses initial stock rows across worksheets in an Excel workbook."""
+        """
+        Parses initial stock rows across worksheets in an Excel workbook.
+        - Scans rows 1-15 dynamically for header containing item identifier and quantity.
+        - If active sheet has no recognizable headers or 0 rows, scans all worksheets.
+        - Supports headerless 4-column spreadsheets (e.g. kality p2 begi.xlsx).
+        - Skips spacer rows and trailing signature/summary rows.
+        """
         wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
         try:
+            # Order sheets: check wb.active first, then all remaining worksheets
+            ordered_sheets = []
+            if wb.active is not None:
+                ordered_sheets.append(wb.active)
+            for ws in wb.worksheets:
+                if ws not in ordered_sheets:
+                    ordered_sheets.append(ws)
+
             rows: List[Tuple[int, Dict[str, Any]]] = []
+            global_row_counter = 0
 
-            global_row_counter = 1
-            for sheet in wb.worksheets:
-                header_map: Dict[str, int] = {}
+            for sheet in ordered_sheets:
+                sheet_cells = list(sheet.iter_rows(values_only=True))
+                if not sheet_cells:
+                    continue
 
-                for row_cells in sheet.iter_rows(values_only=True):
+                # 1. Search rows 1-15 for a valid header containing both item_code and quantity
+                header_map: Optional[Dict[str, int]] = None
+                header_row_idx: Optional[int] = None
+
+                for r_idx, r_cells in enumerate(sheet_cells[:15]):
+                    if not r_cells or not any(c is not None and str(c).strip() for c in r_cells):
+                        continue
+                    candidate_map = self._detect_initial_stock_headers(
+                        [str(c) if c is not None else "" for c in r_cells]
+                    )
+                    if self._is_valid_initial_stock_header(candidate_map):
+                        header_map = candidate_map
+                        header_row_idx = r_idx
+                        break
+
+                # 2. If no valid header row found in rows 1-15, check if the first non-empty row is headerless stock data
+                if header_map is None:
+                    for r_idx, r_cells in enumerate(sheet_cells[:15]):
+                        if not r_cells or not any(c is not None and str(c).strip() for c in r_cells):
+                            continue
+                        if self._is_headerless_stock_row(r_cells):
+                            header_map = {"item_code": 0, "quantity": 1}
+                            if len(r_cells) > 2 and r_cells[2] is not None and str(r_cells[2]).strip():
+                                header_map["unit"] = 2
+                            if len(r_cells) > 3 and r_cells[3] is not None and str(r_cells[3]).strip():
+                                header_map["unit_price"] = 3
+                            header_row_idx = r_idx - 1  # Data rows will start at r_idx
+                            break
+
+                # If still no header or data pattern found in this sheet, skip sheet
+                if header_map is None or header_row_idx is None:
+                    continue
+
+                # 3. Extract data rows immediately following the detected header row
+                for r_idx in range(header_row_idx + 1, len(sheet_cells)):
+                    r_cells = sheet_cells[r_idx]
                     global_row_counter += 1
-                    if not row_cells or not any(
-                        c is not None and str(c).strip() for c in row_cells
-                    ):
+                    if not r_cells or not any(c is not None and str(c).strip() for c in r_cells):
                         continue
 
-                    if not header_map:
-                        header_map = self._detect_initial_stock_headers(
-                            [str(c) if c is not None else "" for c in row_cells]
-                        )
+                    row_data = self._extract_initial_stock_row_data(r_cells, header_map)
+                    item_code = row_data.get("item_code")
+
+                    # Skip empty spacer rows or trailing signature/summary rows
+                    if not item_code or self._is_summary_or_signature(item_code):
                         continue
 
-                    row_data = self._extract_initial_stock_row_data(row_cells, header_map)
                     rows.append((global_row_counter, row_data))
 
             return rows
@@ -1267,74 +1417,89 @@ class ImportService:
         for idx, raw in enumerate(header_cells):
             if raw is None:
                 continue
-            name = str(raw).strip().lower()
-            if name in (
-                "warehouse_code",
+            name = str(raw).strip().lower().rstrip(":*.")
+            name_clean = " ".join(name.replace("_", " ").replace("-", " ").split())
+
+            if name_clean in (
                 "warehouse code",
                 "warehouse",
-                "store_code",
                 "store code",
                 "store",
-                "wh_code",
+                "wh code",
                 "wh",
-            ):
+                "site",
+                "location",
+            ) or name in ("warehouse_code", "store_code", "wh_code"):
                 mapping["warehouse_code"] = idx
-            elif name in (
-                "item_code",
-                "item code",
-                "code",
+            elif name_clean in (
                 "inventory id",
-                "inventory_id",
+                "inventory code",
+                "item code",
                 "item id",
-                "item_id",
-            ):
+                "sku",
+                "code",
+                "item",
+                "item no",
+                "item number",
+                "material code",
+                "product code",
+            ) or name in ("item_code", "inventory_id", "item_id"):
                 mapping["item_code"] = idx
-            elif name in (
+            elif name_clean in (
                 "quantity",
                 "qty",
-                "opening_balance",
-                "opening balance",
-                "opening_qty",
                 "count",
                 "balance",
+                "stock",
+                "opening balance",
+                "opening qty",
                 "opening stock",
-            ):
+                "beg balance",
+                "beginning balance",
+                "initial stock",
+                "on hand",
+                "qty on hand",
+                "quantity on hand",
+            ) or name in ("opening_balance", "opening_qty", "opening_stock", "qty_on_hand"):
                 mapping["quantity"] = idx
-            elif name in (
+            elif name_clean in (
                 "unit",
-                "unit measurment",
                 "unit measurement",
-                "default_unit",
+                "unit measurment",
                 "uom",
                 "unit of measure",
-            ):
+                "unit of measurement",
+                "default unit",
+                "measure",
+            ) or name in ("default_unit", "unit_measurement", "unit_measurment"):
                 mapping["unit"] = idx
-            elif name in (
-                "project_code",
+            elif name_clean in (
+                "unit price",
+                "unit cost",
+                "price",
+                "unit rate",
+                "cost",
+                "rate",
+            ) or name_clean.startswith("unit price") or name_clean.startswith("unit cost") or name in ("unit_price", "unit_cost"):
+                mapping["unit_price"] = idx
+            elif name_clean in (
                 "project code",
                 "project",
-                "proj_code",
-            ):
+                "proj code",
+                "job",
+            ) or name in ("project_code", "proj_code"):
                 mapping["project_code"] = idx
-            elif name in (
+            elif name_clean in (
                 "remarks",
                 "remark",
                 "notes",
                 "note",
                 "comment",
+                "comments",
                 "description",
+                "item description",
             ):
                 mapping["remarks"] = idx
-            elif name in (
-                "unit price",
-                "unit_price",
-                "price",
-                "unit cost",
-                "unit_cost",
-                "cost",
-                "rate",
-            ):
-                mapping["unit_price"] = idx
 
         return mapping
 
@@ -1348,7 +1513,10 @@ class ImportService:
             if key in header_map and header_map[key] < len(row_cells):
                 cell = row_cells[header_map[key]]
                 if cell is not None:
-                    s = str(cell).strip()
+                    if isinstance(cell, float) and cell.is_integer():
+                        s = str(int(cell))
+                    else:
+                        s = str(cell).strip()
                     return s if s else None
             return None
 

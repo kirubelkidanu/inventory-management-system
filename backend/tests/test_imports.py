@@ -17,6 +17,7 @@ from app.main import app
 from app.models.category import Category
 from app.models.import_ import ImportBatch, ImportError
 from app.models.item import Item
+from app.models.warehouse import Warehouse
 from app.schemas.import_ import ImportBatchPreview, ImportBatchRead, ImportErrorRead
 from app.services.import_ import ImportService, _to_uuid
 
@@ -774,3 +775,236 @@ async def test_api_commit_items_all_path_aliases(token_factory, path_pattern):
     assert data["imported_count"] == 1
     assert "completed successfully" in data["message"].lower()
 
+
+
+
+# ==============================================================================
+# Robust Opening Balance / Initial Stock Excel Parser Tests
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_with_title_rows_above_header():
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    wh = Warehouse(id=wh_id, code="KL-WH-001", name="Kality Store", is_active=True)
+    item1 = Item(
+        id=uuid4(),
+        item_code="01-CM-00001",
+        description="Portland Cement 42.5N",
+        default_unit="BAG",
+        is_active=True,
+    )
+    item2 = Item(
+        id=uuid4(),
+        item_code="02-ST-00001",
+        description="Reinforcement Steel 12mm",
+        default_unit="PCS",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_warehouses_by_codes = AsyncMock(return_value={"KL-WH-001": wh})
+    service.repo.get_items_by_codes = AsyncMock(
+        return_value={"01-CM-00001": item1, "02-ST-00001": item2}
+    )
+    service.repo.get_projects_by_codes = AsyncMock(return_value={})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    # Title rows 1-4, real header on row 5, data on rows 6-7, summary on rows 8-9
+    excel_data = {
+        "Sheet1": [
+            ["KALITY PROJECT 2 - OPENING INVENTORY REPORT", "", "", ""],
+            ["Generated Date: 2026-10-01", "", "", ""],
+            ["Target Warehouse: KL-WH-001", "", "", ""],
+            ["", "", "", ""],
+            ["Inventory ID", "Quantity", "Unit Measurement", "Unit Price"],
+            ["01-CM-00001", 500, "BAG", 2113],
+            ["02-ST-00001", 100, "PCS", 450],
+            ["Total", 600, "", 1056500],
+            ["Approved by: Project Manager", "", "", ""],
+        ]
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="kality_opening.xlsx",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 2
+    assert batch.error_rows == 0
+    assert len(batch.staged_data["rows"]) == 2
+    assert batch.staged_data["rows"][0]["item_code"] == "01-CM-00001"
+    assert batch.staged_data["rows"][0]["quantity"] == "500"
+    assert batch.staged_data["rows"][1]["item_code"] == "02-ST-00001"
+    assert batch.staged_data["rows"][1]["quantity"] == "100"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_non_first_sheet():
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    wh = Warehouse(id=wh_id, code="KL-WH-001", name="Kality Store", is_active=True)
+    item = Item(
+        id=uuid4(),
+        item_code="01-CM-00001",
+        description="Portland Cement",
+        default_unit="BAG",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_warehouses_by_codes = AsyncMock(return_value={"KL-WH-001": wh})
+    service.repo.get_items_by_codes = AsyncMock(return_value={"01-CM-00001": item})
+    service.repo.get_projects_by_codes = AsyncMock(return_value={})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    # Cover sheet has notes, second sheet has actual stock data
+    excel_data = {
+        "Cover": [
+            ["Instructions & Metadata", ""],
+            ["Prepared By", "Kirubel"],
+            ["Remarks", "Do not modify column orders"],
+        ],
+        "StockData": [
+            ["Item Code", "Qty", "Unit", "Price"],
+            ["01-CM-00001", 250, "BAG", 1200],
+        ],
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="multisheet_stock.xlsx",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    assert batch.staged_data["rows"][0]["item_code"] == "01-CM-00001"
+    assert batch.staged_data["rows"][0]["quantity"] == "250"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_4_column_valid_and_error_rows():
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    wh = Warehouse(id=wh_id, code="KL-WH-001", name="Kality Store", is_active=True)
+    item1 = Item(
+        id=uuid4(),
+        item_code="01-CM-00001",
+        description="Cement 42.5N",
+        default_unit="BAG",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_warehouses_by_codes = AsyncMock(return_value={"KL-WH-001": wh})
+    service.repo.get_items_by_codes = AsyncMock(return_value={"01-CM-00001": item1})
+    service.repo.get_projects_by_codes = AsyncMock(return_value={})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    excel_data = {
+        "Sheet1": [
+            ["inventory id", "quantity", "unit measurment", "unit price"],
+            ["01-CM-00001", 410, "BAG", 2113],
+            ["INVALID-ITEM-999", 50, "BAG", 100],
+            ["01-CM-00001", -5, "BAG", 2113],
+        ]
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="kality p2 begi (2).xlsx",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 2
+    assert len(batch.staged_data["rows"]) == 1
+    assert batch.staged_data["rows"][0]["item_code"] == "01-CM-00001"
+
+    service.repo.create_errors.assert_called_once()
+    logged_errors = service.repo.create_errors.call_args[0][0]
+    error_codes = [err.error_code for err in logged_errors]
+    assert "INVALID_ITEM" in error_codes
+    assert "INVALID_QUANTITY" in error_codes
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_headerless_4_column_format():
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    wh = Warehouse(id=wh_id, code="KL-WH-001", name="Kality Store", is_active=True)
+    item1 = Item(
+        id=uuid4(),
+        item_code="01-CM-00001",
+        description="Cement 42.5N",
+        default_unit="BAG",
+        is_active=True,
+    )
+    item2 = Item(
+        id=uuid4(),
+        item_code="02-ST-00001",
+        description="Steel Rebar 12mm",
+        default_unit="PCS",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_warehouses_by_codes = AsyncMock(return_value={"KL-WH-001": wh})
+    service.repo.get_items_by_codes = AsyncMock(
+        return_value={"01-CM-00001": item1, "02-ST-00001": item2}
+    )
+    service.repo.get_projects_by_codes = AsyncMock(return_value={})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    # Raw 4-column data with no header row at all (like kality p2 begi.xlsx)
+    excel_data = {
+        "Sheet1": [
+            ["01-CM-00001", 410, "BAG", 2113],
+            ["02-ST-00001", 1755, "PCS", 771.3],
+            ["Total", 2165, "", ""],
+        ]
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="kality p2 begi.xlsx",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 2
+    assert batch.error_rows == 0
+    assert len(batch.staged_data["rows"]) == 2
+    assert batch.staged_data["rows"][0]["item_code"] == "01-CM-00001"
+    assert batch.staged_data["rows"][0]["quantity"] == "410"
+    assert batch.staged_data["rows"][1]["item_code"] == "02-ST-00001"
+    assert batch.staged_data["rows"][1]["quantity"] == "1755"

@@ -614,3 +614,27 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Backend Tests**: 244 passed in 3.54s across 16 test modules (including updated `test_reports.py` validating unit price and valuation in report mapping, Excel columns, and totals).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+
+---
+
+## 2026-11-03 — Dynamic Header Row & Multi-Sheet Detection for Opening Balance Excel Ingestion
+
+### 1. Architectural Scope & Implementation
+- **Dynamic Header & Worksheet Ingestion (`backend/app/services/import_.py`)**:
+  * Resolved the "The uploaded file contains no data rows" failure when staging multi-sheet workbooks or files with title banners / headerless data like `kality p2 begi.xlsx`.
+  * **Worksheet Traversal**: Prioritizes `wb.active` then iterates all sheets in `wb.worksheets`, skipping blank or informational cover sheets and extracting stock balances from sheets containing actual stock columns.
+  * **Dynamic Header Finder**: Scans rows 1 through 15 looking for canonical item identifier (`inventory id`, `item code`, `sku`, `code`, `item`) AND quantity (`quantity`, `qty`, `count`, `balance`, `stock`, `opening balance`) columns, gracefully skipping title banners, dates, and store metadata rows above the table header.
+  * **Headerless 4-Column Auto-Detection**: If no header row is found in rows 1-15, detects raw 4-column opening inventory spreadsheets (`[item_code, quantity, unit, unit_price]`) where the first non-empty row has an item identifier in col 0 and positive numeric quantity in col 1, allowing direct ingestion of client spreadsheets like `kality p2 begi.xlsx`.
+  * **Summary & Signature Row Filtering**: Implemented `_is_summary_or_signature()` to automatically skip empty spacer rows and trailing summary/signature rows (`Total`, `Grand Total`, `Approved by`, `Prepared by`, `Checked by`, etc.) to prevent false catalog item errors.
+  * **Data Normalization**: Correctly converts numeric item IDs (e.g. `101`, `101.0`) to canonical string SKUs, handles decimal/integer quantities, UOM normalization, and optional unit prices.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 244 passed in 3.00s across 16 test modules. Added comprehensive test coverage in `backend/tests/test_imports.py`:
+  * `test_stage_initial_stock_with_title_rows_above_header`: Verifies titles on rows 1-4, headers on row 5, and summary/signature row skipping.
+  * `test_stage_initial_stock_non_first_sheet`: Verifies multi-sheet workbook where data is on a non-first sheet.
+  * `test_stage_initial_stock_4_column_valid_and_error_rows`: Verifies 4-column format where valid items go to staged rows and invalid items/quantities log to `import_errors`.
+  * `test_stage_initial_stock_headerless_4_column_format`: Verifies raw 4-column file without header row (e.g. `kality p2 begi.xlsx`).
+- **Real File Validation**: Verified against client files `kality p2 begi.xlsx` (33/33 rows parsed) and `kality p2 begi (2).xlsx` (33/33 rows parsed).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
