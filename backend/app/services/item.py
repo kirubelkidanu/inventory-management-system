@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from decimal import Decimal
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -361,3 +362,17 @@ class ItemService:
         await self.repository.commit()
         await self.repository.session.refresh(item)
         return item
+
+    async def get_latest_unit_price(
+        self, item_id: UUID, warehouse_id: Optional[UUID] = None
+    ) -> Optional[Decimal]:
+        if hasattr(self.repository, "get_latest_unit_price"):
+            return await self.repository.get_latest_unit_price(item_id, warehouse_id=warehouse_id)
+        return None
+
+    async def get_latest_unit_prices_batch(
+        self, item_ids: list[UUID]
+    ) -> dict[UUID, Decimal]:
+        if hasattr(self.repository, "get_latest_unit_prices_batch"):
+            return await self.repository.get_latest_unit_prices_batch(item_ids)
+        return {}

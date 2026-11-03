@@ -19,6 +19,7 @@ from app.schemas.transaction import (
     GRVCreate,
     SIVCreate,
     TransactionLineCreate,
+    TransactionLineRead,
     TransactionRead,
 )
 from app.services.transaction import (
@@ -966,3 +967,113 @@ async def test_opening_balance_audit_log_satisfies_check_constraint():
     assert audit_call["entity_type"] == "transaction"
     assert audit_call["entity_id"] == str(tx.id)
     assert audit_call["actor_user_id"] == user_id
+
+
+@pytest.mark.asyncio
+async def test_service_siv_persists_unit_price_and_computes_total_valuation():
+    """Verifies that SIV line items persist unit_price and compute total line valuation."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    existing_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("100.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.lock_inventory_balances_for_update = AsyncMock(
+        return_value={item_id: existing_bal}
+    )
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+
+    payload = SIVCreate(
+        warehouse_id=wh_id,
+        requested_from="Structural Work Section",
+        lines=[
+            TransactionLineCreate(
+                item_id=item_id,
+                quantity=Decimal("30.0000"),
+                unit="PCS",
+                unit_price=Decimal("450.5000"),
+            )
+        ],
+    )
+
+    tx = await service.create_and_post_siv(user_id=user_id, payload=payload)
+    assert tx.transaction_type == "SIV"
+    assert tx.status == "POSTED"
+
+    service.repo.create_transaction_lines.assert_awaited_once()
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("450.5000")
+
+    # Invariant: stock decrements by exactly quantity
+    assert existing_bal.quantity_on_hand == Decimal("70.0000")
+
+    # Verify line read computed total
+    line_read = TransactionLineRead.model_validate(saved_lines[0])
+    assert line_read.unit_price == Decimal("450.5000")
+    assert line_read.total_price == Decimal("13515.0000")
+
+
+@pytest.mark.asyncio
+async def test_service_siv_auto_looks_up_latest_inbound_unit_price_when_none():
+    """Verifies that SIV lines automatically look up the latest inbound unit price when unit_price is None."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    existing_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("50.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.lock_inventory_balances_for_update = AsyncMock(
+        return_value={item_id: existing_bal}
+    )
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("825.2500"))
+
+    payload = SIVCreate(
+        warehouse_id=wh_id,
+        lines=[
+            TransactionLineCreate(
+                item_id=item_id,
+                quantity=Decimal("10.0000"),
+                unit="PCS",
+                unit_price=None,  # triggers auto-lookup
+            )
+        ],
+    )
+
+    tx = await service.create_and_post_siv(user_id=user_id, payload=payload)
+    service.repo.get_latest_inbound_unit_price.assert_awaited_once_with(
+        item_id=item_id,
+        warehouse_id=wh_id,
+    )
+
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert saved_lines[0].unit_price == Decimal("825.2500")

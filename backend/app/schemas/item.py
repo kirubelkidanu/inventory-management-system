@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -51,6 +53,7 @@ class ItemRead(ItemBase):
     id: UUID
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    latest_unit_price: Optional[Decimal] = None
 
 
 class ItemDeleteResult(BaseModel):
@@ -70,5 +73,12 @@ class ItemBulkDeleteResult(BaseModel):
     deleted_count: int
     archived_count: int
     results: list[ItemDeleteResult]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ItemLatestCostResponse(BaseModel):
+    item_id: UUID
+    latest_unit_price: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)

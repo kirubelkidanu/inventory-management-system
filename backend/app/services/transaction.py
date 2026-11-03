@@ -294,6 +294,16 @@ class TransactionService:
             # Create Transaction lines
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
+                unit_price = None
+                if line_input.unit_price is not None:
+                    unit_price = Decimal(str(line_input.unit_price))
+                else:
+                    if hasattr(self.repo, "get_latest_inbound_unit_price"):
+                        unit_price = await self.repo.get_latest_inbound_unit_price(
+                            item_id=line_input.item_id,
+                            warehouse_id=getattr(payload, "warehouse_id", None) or getattr(payload, "source_warehouse_id", None),
+                        )
+
                 line = TransactionLine(
                     id=uuid.uuid4(),
                     transaction_id=tx_id,
@@ -301,6 +311,7 @@ class TransactionService:
                     item_id=line_input.item_id,
                     quantity=line_input.quantity,
                     unit=line_input.unit,
+                    unit_price=unit_price,
                     remarks=line_input.remarks,
                 )
                 lines.append(line)
@@ -457,6 +468,16 @@ class TransactionService:
             # Create Transaction lines
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
+                unit_price = None
+                if line_input.unit_price is not None:
+                    unit_price = Decimal(str(line_input.unit_price))
+                else:
+                    if hasattr(self.repo, "get_latest_inbound_unit_price"):
+                        unit_price = await self.repo.get_latest_inbound_unit_price(
+                            item_id=line_input.item_id,
+                            warehouse_id=getattr(payload, "warehouse_id", None) or getattr(payload, "source_warehouse_id", None),
+                        )
+
                 line = TransactionLine(
                     id=uuid.uuid4(),
                     transaction_id=tx_id,
@@ -464,6 +485,7 @@ class TransactionService:
                     item_id=line_input.item_id,
                     quantity=line_input.quantity,
                     unit=line_input.unit,
+                    unit_price=unit_price,
                     remarks=line_input.remarks,
                 )
                 lines.append(line)
@@ -1339,3 +1361,10 @@ class TransactionService:
         except Exception:
             await self.session.rollback()
             raise
+
+    async def get_latest_inbound_unit_price(
+        self, item_id: uuid.UUID, warehouse_id: Optional[uuid.UUID] = None
+    ) -> Optional[Decimal]:
+        if hasattr(self.repo, "get_latest_inbound_unit_price"):
+            return await self.repo.get_latest_inbound_unit_price(item_id, warehouse_id)
+        return None

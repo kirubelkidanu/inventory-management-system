@@ -710,3 +710,37 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Backend Tests**: 252 passed in 3.87s across 16 test modules (100% passing).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+
+---
+
+## 2026-11-03 — Automatic Unit Price Lookup, Total Price Calculation & Trial Balance Valuation for SIV
+
+### 1. Architectural Scope & Implementation
+- **Data Models & Schemas (`backend/app/schemas/item.py`, `backend/app/schemas/transaction.py`)**:
+  * Added `latest_unit_price: Optional[Decimal] = None` to `ItemRead`.
+  * Added `ItemLatestCostResponse(item_id, latest_unit_price, warehouse_id)` schema.
+  * Preserved `TransactionLineCreate.unit_price` and auto-computed `TransactionLineRead.total_price` (`quantity * unit_price`).
+- **Inbound Cost Lookup & Transaction Service (`backend/app/repositories/`, `backend/app/services/`)**:
+  * Implemented `get_latest_inbound_unit_price(item_id, warehouse_id)` and batch `get_latest_inbound_unit_prices_batch(item_ids)` in `TransactionRepository` and `ItemRepository`.
+  * Queries the latest unit price from POSTED inbound transactions (`GRV` or `ADJUSTMENT` with `OPENING_BALANCE` external reference).
+  * In `TransactionService.create_and_post_siv`, lines with no explicitly specified `unit_price` automatically retrieve and save the latest inbound unit price to `transaction_lines.unit_price`.
+  * Preserved stock decrement invariants: SIV strictly decrements `inventory_balances.quantity_on_hand` and writes `movement_type='OUT'` with `signed_quantity = -quantity`.
+- **API Endpoints (`backend/app/api/routes/items.py`)**:
+  * Updated `list_items` to batch-resolve `latest_unit_price` across items.
+  * Updated `get_item` to resolve and return `latest_unit_price`.
+  * Added `GET /api/v1/items/{item_id}/latest-cost` (and trailing slash variant) for fast single-item pricing lookups.
+- **Frontend SIV Form & Transaction Detail (`frontend/src/features/transactions/`)**:
+  * `SIVPage.tsx`: Added `Unit Price (ETB)` editable input and auto-calculated `Total Price (ETB)` column to SIV voucher creation.
+  * Selecting an item via `ItemCombobox` automatically populates `unit_price` from `item.latest_unit_price` or via `/latest-cost`, falling back cleanly to `0.00`.
+  * Added voucher summary footer displaying `Total Issued Quantity` and `Total Issued Valuation (ETB)`.
+  * `TransactionDetailPage.tsx`: Extended unit price and total price display to SIV transactions alongside GRVs.
+  * Trial Balance ledger and Excel export automatically display unit price and total valuation for SIV lines via existing `transaction_lines.unit_price` joins.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 254 passed in 3.55s across 16 test modules (100% passing).
+  * Added `test_service_siv_persists_unit_price_and_computes_total_valuation` in `backend/tests/test_transactions.py`.
+  * Added `test_service_siv_auto_looks_up_latest_inbound_unit_price_when_none` in `backend/tests/test_transactions.py`.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Stock Invariant Verification**: All stock deductions, movements, and reconciliation checks remain 100% in balance.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

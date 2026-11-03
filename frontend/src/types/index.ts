@@ -52,6 +52,7 @@ export interface Item {
   category_id: string
   default_unit: string
   is_active: boolean
+  latest_unit_price?: number | string | null
   created_at?: string
   updated_at?: string
   category?: Category
