@@ -52,6 +52,7 @@ export const OpeningBalancePage: React.FC = () => {
   const [excelRemarks, setExcelRemarks] = useState('')
   const [excelFile, setExcelFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [fallbackToCatalogUom, setFallbackToCatalogUom] = useState(true)
   const [excelErrorMessage, setExcelErrorMessage] = useState<string | null>(null)
   const [previewData, setPreviewData] = useState<InitialStockBatchPreviewResponse | null>(null)
   const [previewSubTab, setPreviewSubTab] = useState<'valid' | 'issues'>('valid')
@@ -142,6 +143,7 @@ export const OpeningBalancePage: React.FC = () => {
         project_id: excelProjectId || undefined,
         transaction_date: excelDate,
         remarks: excelRemarks || 'Opening balance import',
+        fallback_to_catalog_uom: fallbackToCatalogUom,
       })
       setPreviewData(res)
       if (res.errors && res.errors.length > 0 && res.valid_rows_sample.length === 0) {
@@ -646,6 +648,22 @@ export const OpeningBalancePage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Controlled UOM Catalog Fallback Mode */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-700 flex items-center justify-between">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={fallbackToCatalogUom}
+                    onChange={(e) => setFallbackToCatalogUom(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-semibold text-slate-800">UOM Catalog Fallback:</span>{' '}
+                    <span className="text-slate-600">Auto-adopt catalog default UOM when spreadsheet unit has dimensional mismatch (e.g. roll vs PCS)</span>
+                  </div>
+                </label>
+              </div>
+
               {/* Action Bar */}
               <div className="flex justify-end pt-2">
                 <button
@@ -798,7 +816,17 @@ export const OpeningBalancePage: React.FC = () => {
                               </td>
                               <td className="py-2.5 px-4 font-mono font-medium text-blue-700">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span>{r.item_code}</span>
+                                  <span title={r.sku_normalized && r.original_item_code ? `Normalized from "${r.original_item_code}"` : undefined}>
+                                    {r.item_code}
+                                  </span>
+                                  {r.sku_normalized && (
+                                    <span
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-help"
+                                      title={r.original_item_code ? `Normalized from spreadsheet: "${r.original_item_code}"` : 'Normalized SKU formatting'}
+                                    >
+                                      Normalized
+                                    </span>
+                                  )}
                                   {r.is_merged && (
                                     <span
                                       className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 cursor-help"
@@ -813,7 +841,19 @@ export const OpeningBalancePage: React.FC = () => {
                               <td className="py-2.5 px-4 text-right font-semibold text-slate-900">
                                 {parseFloat(String(r.quantity)).toLocaleString()}
                               </td>
-                              <td className="py-2.5 px-4 text-slate-500 font-medium">{r.unit}</td>
+                              <td className="py-2.5 px-4 text-slate-500 font-medium">
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span>{r.unit}</span>
+                                  {r.uom_fallback && (
+                                    <span
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 cursor-help"
+                                      title={r.uom_note || `Adopted catalog default unit '${r.unit}' from spreadsheet '${r.original_uom}'`}
+                                    >
+                                      UOM: {r.unit} (from {r.original_uom})
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
                               <td className="py-2.5 px-4 text-right text-slate-600">
                                 {parseFloat(String(r.unit_price)).toFixed(2)}
                               </td>

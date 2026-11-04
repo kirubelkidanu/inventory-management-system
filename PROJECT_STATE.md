@@ -781,3 +781,40 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+
+---
+
+## 2026-11-04 — Opening Balance Resilient SKU Formatting Normalization & Controlled UOM Catalog Fallback
+
+### 1. Architectural Scope & Implementation
+- **Resilient SKU Formatting Normalization (`backend/app/services/import_.py`, `backend/app/repositories/import_.py`)**:
+  * In `ImportRepository.get_items_by_codes` and `stage_initial_stock_file`, candidate SKU codes automatically expand to include standard hyphenated permutations (`XX-YY-ZZZZZ`) for any 9-character alphanumeric sequence.
+  * Pre-indexed catalog items into dual dictionaries:
+    - Exact key: `item.item_code.strip().upper()`
+    - Normalized alphanumeric key: `re.sub(r'[^A-Z0-9]', '', item.item_code.upper())`
+  * In the row validation loop, raw codes (e.g. `'11-OT -00106'`, `'11 OT 00256'`, `'05 TL-00022'`) first attempt exact lookup and fall back to alphanumeric matching, automatically populating the canonical catalog SKU code while marking `sku_normalized = True` and recording `original_item_code`.
+  * Truly non-existent codes (e.g. `'17-CL-00014'`) continue to log `INVALID_ITEM` in `import_errors`.
+- **Controlled UOM Catalog Fallback Mode & Synonym Expansion (`backend/app/services/import_.py`)**:
+  * Added `pail`, `pails`, `gallon`, `gallons`, and `gal` to the Volume synonym group, mapping directly to `Liter` or `Gallon` without error.
+  * Implemented `fallback_to_catalog_uom: bool = False` parameter in `stage_initial_stock_file` (with `fallback_to_catalog_uom: bool = Form(True)` in FastAPI route).
+  * When `fallback_to_catalog_uom=True` and a dimensional mismatch occurs (e.g. `roll` vs `PCS`), the staged line adopts `item.default_unit`, records `uom_fallback = True`, `original_uom = raw_uom`, and generates an informational note `f"Unit '{raw_uom}' adopted catalog default unit '{item.default_unit}'"` without failing validation.
+  * Preserved strict `INVALID_UOM` error logging when fallback is disabled (`fallback_to_catalog_uom=False`).
+- **Frontend Staging Preview Alignment (`frontend/src/features/inventory/OpeningBalancePage.tsx`, `frontend/src/types/index.ts`, `frontend/src/features/inventory/useInventoryData.ts`)**:
+  * Extended `InitialStockStagedRow` interface with `sku_normalized`, `original_item_code`, `uom_fallback`, `original_uom`, and `uom_note`.
+  * Added a controlled UOM fallback checkbox in the bulk upload panel (checked by default): `Auto-adopt catalog default UOM if spreadsheet unit has dimensional mismatch`.
+  * Updated the "Valid Stock Lines" table:
+    - Normalized items display the canonical catalog SKU code with an informative `Normalized` pill badge and tooltip showing the raw code from the spreadsheet.
+    - Lines where UOM was adopted display a subtle warning tag: `UOM: {r.unit} (from {r.original_uom})` with explanatory tooltip.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 265 passed in 5.09s across 16 test modules (100% passing).
+  * Added `test_stage_initial_stock_sku_spaces_around_hyphens` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_sku_spaces_instead_of_hyphens` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_sku_space_instead_of_first_hyphen` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_truly_non_existent_sku_logs_invalid_item` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_uom_fallback_adopts_catalog_default_unit` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_uom_volume_synonym_pail_maps_to_liter` in `backend/tests/test_imports.py`.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

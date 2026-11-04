@@ -1332,3 +1332,265 @@ async def test_stage_initial_stock_merges_duplicate_skus_and_calculates_weighted
     assert ob_call.lines[0].item_id == item_id
     assert ob_call.lines[0].quantity == Decimal("30")
     assert ob_call.lines[0].unit_price == Decimal("200.0000")
+
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_sku_spaces_around_hyphens():
+    """Verifies that SKU code with spaces around hyphens ('11-OT -00106') resolves to canonical '11-OT-00106'."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="11-OT-00106",
+        description="Office Tool",
+        default_unit="PCS",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"11-OT-00106": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["11-OT -00106", "15", "PCS", "250.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="sku_spaces_around_hyphen.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["item_code"] == "11-OT-00106"
+    assert staged_row["sku_normalized"] is True
+    assert staged_row["original_item_code"] == "11-OT -00106"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_sku_spaces_instead_of_hyphens():
+    """Verifies that SKU code with spaces instead of hyphens ('11 OT 00256') resolves to canonical '11-OT-00256'."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="11-OT-00256",
+        description="Office Equipment",
+        default_unit="PCS",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"11-OT-00256": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["11 OT 00256", "30", "PCS", "120.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="sku_spaces_instead_of_hyphens.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["item_code"] == "11-OT-00256"
+    assert staged_row["sku_normalized"] is True
+    assert staged_row["original_item_code"] == "11 OT 00256"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_sku_space_instead_of_first_hyphen():
+    """Verifies that SKU code with space instead of first hyphen ('05 TL-00022') resolves to canonical '05-TL-00022'."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="05-TL-00022",
+        description="Floor Tiles",
+        default_unit="M2",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"05-TL-00022": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["05 TL-00022", "80", "M2", "420.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="sku_space_first_hyphen.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["item_code"] == "05-TL-00022"
+    assert staged_row["sku_normalized"] is True
+    assert staged_row["original_item_code"] == "05 TL-00022"
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_truly_non_existent_sku_logs_invalid_item():
+    """Verifies that a truly non-existent SKU ('17-CL-00014') logs INVALID_ITEM error."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["17-CL-00014", "20", "PCS", "50.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="nonexistent_sku.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.valid_rows == 0
+    assert batch.error_rows == 1
+    logged_errors = service.repo.create_errors.call_args[0][0]
+    assert any(err.error_code == "INVALID_ITEM" and "17-CL-00014" in (err.raw_value or "") for err in logged_errors)
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_uom_fallback_adopts_catalog_default_unit():
+    """Verifies that when fallback_to_catalog_uom=True, dimensional mismatch adopts catalog unit."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="05-HW-00010",
+        description="Wire Roll",
+        default_unit="PCS",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"05-HW-00010": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["05-HW-00010", "12", "roll", "150.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="uom_fallback.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+        fallback_to_catalog_uom=True,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["unit"] == "PCS"
+    assert staged_row["uom_fallback"] is True
+    assert staged_row["original_uom"] == "roll"
+    assert "adopted catalog default unit 'PCS'" in staged_row["uom_note"]
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_uom_volume_synonym_pail_maps_to_liter():
+    """Verifies that 'pail' is part of the Volume synonym group and maps to 'Liter' without fallback."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="07-PC-00005",
+        description="Gloss Paint",
+        default_unit="Liter",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"07-PC-00005": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["07-PC-00005", "5", "pail", "1200.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="pail_synonym.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+        fallback_to_catalog_uom=False,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.valid_rows == 1
+    assert batch.error_rows == 0
+    staged_row = batch.staged_data["rows"][0]
+    assert staged_row["unit"] == "Liter"
+    assert staged_row.get("uom_fallback", False) is False

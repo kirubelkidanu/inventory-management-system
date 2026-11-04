@@ -9,6 +9,7 @@ import uuid
 
 from fastapi import HTTPException, status
 import openpyxl
+import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
@@ -56,8 +57,8 @@ def generate_batch_number(prefix: str) -> str:
 # Packaging: {'bag', 'bags'} -> 'BAG'; {'roll', 'rolls'} -> 'ROLL'; {'pkt', 'packet', 'packets'} -> 'Pkt'
 # Mass: {'qtl', 'quintal', 'quintals'} -> 'Qtl'
 UOM_SYNONYM_GROUPS: List[Set[str]] = [
-    # Volume
-    {"ltr", "liter", "litre", "liters", "litres", "l"},
+    # Volume: includes pail, gallon, liter
+    {"ltr", "liter", "litre", "liters", "litres", "l", "gallon", "gallons", "gal", "pail", "pails"},
     # Count
     {"pcs", "pc", "piece", "pieces", "ea", "each", "no", "number"},
     # Weight
@@ -616,6 +617,7 @@ class ImportService:
         project_id: Optional[uuid.UUID] = None,
         transaction_date: Optional[date] = None,
         remarks: Optional[str] = None,
+        fallback_to_catalog_uom: bool = False,
         **kwargs: Any,
     ) -> ImportBatch:
         """
@@ -674,16 +676,26 @@ class ImportService:
             existing_wh_items = await self.repo.get_existing_opening_balance_item_ids(target_wh.id)
 
         # Extract candidate codes
+        is_uom_fallback_enabled = bool(
+            fallback_to_catalog_uom or kwargs.get("fallback_to_catalog_uom")
+        ) and str(fallback_to_catalog_uom or kwargs.get("fallback_to_catalog_uom")).lower() not in ("false", "0", "no")
+
+        # Extract candidate codes
         candidate_wh_codes = list({
             str(data.get("warehouse_code", "")).strip().upper()
             for _, data in raw_rows
             if data.get("warehouse_code") is not None and str(data.get("warehouse_code", "")).strip()
         })
-        candidate_item_codes = list({
-            str(data.get("item_code", "")).strip().upper()
-            for _, data in raw_rows
-            if data.get("item_code") is not None and str(data.get("item_code", "")).strip()
-        })
+        candidate_item_codes = set()
+        for _, data in raw_rows:
+            raw_c = data.get("item_code")
+            if raw_c is not None and str(raw_c).strip():
+                clean_c = str(raw_c).strip().upper()
+                candidate_item_codes.add(clean_c)
+                al = re.sub(r"[^A-Z0-9]", "", clean_c)
+                if len(al) == 9:
+                    candidate_item_codes.add(f"{al[:2]}-{al[2:4]}-{al[4:]}")
+
         candidate_proj_codes = list({
             str(data.get("project_code", "")).strip().upper()
             for _, data in raw_rows
@@ -691,8 +703,19 @@ class ImportService:
         })
 
         warehouses_map = await self.repo.get_warehouses_by_codes(candidate_wh_codes)
-        items_map = await self.repo.get_items_by_codes(candidate_item_codes)
+        items_map = await self.repo.get_items_by_codes(list(candidate_item_codes))
         projects_map = await self.repo.get_projects_by_codes(candidate_proj_codes)
+
+        # Pre-index the catalog with both exact codes and normalized alphanumeric keys
+        exact_item_lookup: Dict[str, Item] = {}
+        alphanumeric_item_lookup: Dict[str, Item] = {}
+
+        for item_obj in items_map.values():
+            code_upper = item_obj.item_code.strip().upper()
+            exact_item_lookup[code_upper] = item_obj
+            alphanumeric_key = re.sub(r"[^A-Z0-9]", "", code_upper)
+            if alphanumeric_key:
+                alphanumeric_item_lookup[alphanumeric_key] = item_obj
 
         import_errors: List[ImportError] = []
         unaggregated_valid_rows: List[Dict[str, Any]] = []
@@ -753,9 +776,13 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # Determine Item
+            # Determine Item with resilient exact and alphanumeric matching
+            cleaned_raw = item_code
             matched_item: Optional[Item] = None
-            if not item_code:
+            sku_normalized = False
+            original_item_code: Optional[str] = None
+
+            if not cleaned_raw:
                 import_errors.append(
                     ImportError(
                         id=uuid.uuid4(),
@@ -770,21 +797,31 @@ class ImportService:
                 )
                 row_has_error = True
             else:
-                matched_item = items_map.get(item_code.upper())
-                if matched_item is None:
-                    import_errors.append(
-                        ImportError(
-                            id=uuid.uuid4(),
-                            batch_id=batch_id,
-                            row_number=row_number,
-                            column_name="item_code",
-                            raw_value=item_code,
-                            error_code="INVALID_ITEM",
-                            error_message=f"Item '{item_code}' not found in catalog.",
-                            created_at=now_utc,
+                raw_upper = cleaned_raw.upper()
+                if raw_upper in exact_item_lookup:
+                    matched_item = exact_item_lookup[raw_upper]
+                    item_code = matched_item.item_code
+                else:
+                    raw_alphanumeric = re.sub(r"[^A-Z0-9]", "", raw_upper)
+                    if raw_alphanumeric and raw_alphanumeric in alphanumeric_item_lookup:
+                        matched_item = alphanumeric_item_lookup[raw_alphanumeric]
+                        item_code = matched_item.item_code
+                        sku_normalized = True
+                        original_item_code = cleaned_raw
+                    else:
+                        import_errors.append(
+                            ImportError(
+                                id=uuid.uuid4(),
+                                batch_id=batch_id,
+                                row_number=row_number,
+                                column_name="item_code",
+                                raw_value=cleaned_raw,
+                                error_code="INVALID_ITEM",
+                                error_message=f"Item '{cleaned_raw}' not found in catalog.",
+                                created_at=now_utc,
+                            )
                         )
-                    )
-                    row_has_error = True
+                        row_has_error = True
 
 # Duplicate checking removed: multiple rows with the same SKU are merged below per ADR-006
 
@@ -853,23 +890,34 @@ class ImportService:
                     )
                     row_has_error = True
 
-            # Unit validation & fallback using canonical UOM synonyms
+            # Unit validation & fallback using canonical UOM synonyms and optional catalog fallback
+            resolved_unit = "PCS"
+            uom_fallback = False
+            original_uom: Optional[str] = None
+            uom_note: Optional[str] = None
+
             if matched_item is not None:
                 resolved_unit, uom_valid = resolve_canonical_uom(unit, matched_item.default_unit)
                 if not uom_valid:
-                    import_errors.append(
-                        ImportError(
-                            id=uuid.uuid4(),
-                            batch_id=batch_id,
-                            row_number=row_number,
-                            column_name="unit",
-                            raw_value=unit,
-                            error_code="INVALID_UOM",
-                            error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
-                            created_at=now_utc,
+                    if is_uom_fallback_enabled:
+                        uom_fallback = True
+                        original_uom = unit
+                        resolved_unit = matched_item.default_unit
+                        uom_note = f"Unit '{unit}' adopted catalog default unit '{matched_item.default_unit}'"
+                    else:
+                        import_errors.append(
+                            ImportError(
+                                id=uuid.uuid4(),
+                                batch_id=batch_id,
+                                row_number=row_number,
+                                column_name="unit",
+                                raw_value=unit,
+                                error_code="INVALID_UOM",
+                                error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
+                                created_at=now_utc,
+                            )
                         )
-                    )
-                    row_has_error = True
+                        row_has_error = True
                 unit = resolved_unit
             else:
                 unit = unit or "PCS"
@@ -955,6 +1003,11 @@ class ImportService:
                         "unit_price": parsed_price,
                         "has_explicit_price": has_explicit_price,
                         "remarks": row_remarks,
+                        "sku_normalized": sku_normalized,
+                        "original_item_code": original_item_code,
+                        "uom_fallback": uom_fallback,
+                        "original_uom": original_uom,
+                        "uom_note": uom_note,
                     }
                 )
 
@@ -993,6 +1046,11 @@ class ImportService:
                         "merged_count": 1,
                         "merged_rows": [r["row_number"]],
                         "merge_note": None,
+                        "sku_normalized": r.get("sku_normalized", False),
+                        "original_item_code": r.get("original_item_code"),
+                        "uom_fallback": r.get("uom_fallback", False),
+                        "original_uom": r.get("original_uom"),
+                        "uom_note": r.get("uom_note"),
                     }
                 )
             else:
@@ -1000,9 +1058,6 @@ class ImportService:
                 row_numbers = [r["row_number"] for r in group]
                 total_qty = sum((r["quantity"] for r in group), Decimal("0"))
 
-                # Pricing calculation per requirement:
-                # "If unit_price is provided on multiple rows, calculate the weighted average unit price:
-                #  sum(qty * price) / sum(qty). If only one row has price, retain that price."
                 priced_rows = [r for r in group if r["has_explicit_price"] and r["unit_price"] > Decimal("0")]
                 if len(priced_rows) == 0:
                     avg_unit_price = Decimal("0.0000")
@@ -1020,6 +1075,12 @@ class ImportService:
                 row_nums_str = ", ".join(f"#{num}" for num in row_numbers)
                 merge_note = f"Merged {len(group)} rows (rows: {row_nums_str}) with total quantity {total_qty}"
                 combined_remarks = "; ".join(filter(None, [r.get("remarks") for r in group])) or merge_note
+
+                any_sku_norm = any(r.get("sku_normalized") for r in group)
+                orig_codes = [r.get("original_item_code") for r in group if r.get("original_item_code")]
+                any_uom_fb = any(r.get("uom_fallback") for r in group)
+                orig_uoms = [r.get("original_uom") for r in group if r.get("original_uom")]
+                uom_notes = [r.get("uom_note") for r in group if r.get("uom_note")]
 
                 valid_rows.append(
                     {
@@ -1042,6 +1103,11 @@ class ImportService:
                         "merged_count": len(group),
                         "merged_rows": row_numbers,
                         "merge_note": merge_note,
+                        "sku_normalized": any_sku_norm,
+                        "original_item_code": orig_codes[0] if orig_codes else None,
+                        "uom_fallback": any_uom_fb,
+                        "original_uom": orig_uoms[0] if orig_uoms else None,
+                        "uom_note": "; ".join(uom_notes) if uom_notes else None,
                     }
                 )
 

@@ -256,9 +256,9 @@ export function useStageInitialStock() {
   return useMutation<
     InitialStockBatchPreviewResponse,
     Error,
-    { file: File; warehouseId?: string; warehouse_id?: string; projectId?: string; project_id?: string; transactionDate?: string; transaction_date?: string; remarks?: string }
+    { file: File; warehouseId?: string; warehouse_id?: string; projectId?: string; project_id?: string; transactionDate?: string; transaction_date?: string; remarks?: string; fallback_to_catalog_uom?: boolean; fallbackToCatalogUom?: boolean }
   >({
-    mutationFn: async ({ file, warehouseId, warehouse_id, projectId, project_id, transactionDate, transaction_date, remarks }) => {
+    mutationFn: async ({ file, warehouseId, warehouse_id, projectId, project_id, transactionDate, transaction_date, remarks, fallback_to_catalog_uom, fallbackToCatalogUom }) => {
       const formData = new FormData()
       formData.append('file', file)
       const targetWh = warehouseId || warehouse_id || ''
@@ -268,6 +268,8 @@ export function useStageInitialStock() {
       const targetDate = transactionDate || transaction_date
       if (targetDate) formData.append('transaction_date', targetDate)
       if (remarks) formData.append('remarks', remarks)
+      const fbUom = fallback_to_catalog_uom ?? fallbackToCatalogUom ?? true
+      formData.append('fallback_to_catalog_uom', String(fbUom))
 
       const stageRes = await api.post<ImportBatch>('/imports/initial-stock/stage', formData, {
         headers: {

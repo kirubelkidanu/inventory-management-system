@@ -1,6 +1,7 @@
 # backend/app/repositories/import_.py
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
+import re
 import uuid
 
 from sqlalchemy import select
@@ -133,10 +134,15 @@ class ImportRepository:
         return {w.code.strip().upper(): w for w in result.scalars().all()}
 
     async def get_items_by_codes(self, codes: List[str]) -> Dict[str, Item]:
-        """Retrieves items mapped by uppercase item_code."""
+        """Retrieves items mapped by uppercase item_code, expanding candidate codes with normalized variants."""
         if not codes:
             return {}
-        stmt = select(Item).where(Item.item_code.in_(codes))
+        expanded_codes = set(codes)
+        for c in codes:
+            al = re.sub(r"[^A-Z0-9]", "", c.upper())
+            if len(al) == 9:
+                expanded_codes.add(f"{al[:2]}-{al[2:4]}-{al[4:]}")
+        stmt = select(Item).where(Item.item_code.in_(list(expanded_codes)))
         result = await self.session.execute(stmt)
         return {i.item_code.strip().upper(): i for i in result.scalars().all()}
 
