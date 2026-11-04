@@ -57,8 +57,10 @@ def generate_batch_number(prefix: str) -> str:
 # Packaging: {'bag', 'bags'} -> 'BAG'; {'roll', 'rolls'} -> 'ROLL'; {'pkt', 'packet', 'packets'} -> 'Pkt'
 # Mass: {'qtl', 'quintal', 'quintals'} -> 'Qtl'
 UOM_SYNONYM_GROUPS: List[Set[str]] = [
-    # Volume: includes pail, gallon, liter
-    {"ltr", "liter", "litre", "liters", "litres", "l", "gallon", "gallons", "gal", "pail", "pails"},
+    # Volume - Liter
+    {"ltr", "liter", "litre", "liters", "litres", "l"},
+    # Volume - Gallon
+    {"gal", "gallon", "gallons"},
     # Count
     {"pcs", "pc", "piece", "pieces", "ea", "each", "no", "number"},
     # Weight
@@ -617,7 +619,6 @@ class ImportService:
         project_id: Optional[uuid.UUID] = None,
         transaction_date: Optional[date] = None,
         remarks: Optional[str] = None,
-        fallback_to_catalog_uom: bool = False,
         **kwargs: Any,
     ) -> ImportBatch:
         """
@@ -674,11 +675,6 @@ class ImportService:
         existing_wh_items: Set[uuid.UUID] = set()
         if target_wh is not None:
             existing_wh_items = await self.repo.get_existing_opening_balance_item_ids(target_wh.id)
-
-        # Extract candidate codes
-        is_uom_fallback_enabled = bool(
-            fallback_to_catalog_uom or kwargs.get("fallback_to_catalog_uom")
-        ) and str(fallback_to_catalog_uom or kwargs.get("fallback_to_catalog_uom")).lower() not in ("false", "0", "no")
 
         # Extract candidate codes
         candidate_wh_codes = list({
@@ -890,34 +886,24 @@ class ImportService:
                     )
                     row_has_error = True
 
-            # Unit validation & fallback using canonical UOM synonyms and optional catalog fallback
+            # Unit validation using canonical 1:1 UOM synonyms
             resolved_unit = "PCS"
-            uom_fallback = False
-            original_uom: Optional[str] = None
-            uom_note: Optional[str] = None
-
             if matched_item is not None:
                 resolved_unit, uom_valid = resolve_canonical_uom(unit, matched_item.default_unit)
                 if not uom_valid:
-                    if is_uom_fallback_enabled:
-                        uom_fallback = True
-                        original_uom = unit
-                        resolved_unit = matched_item.default_unit
-                        uom_note = f"Unit '{unit}' adopted catalog default unit '{matched_item.default_unit}'"
-                    else:
-                        import_errors.append(
-                            ImportError(
-                                id=uuid.uuid4(),
-                                batch_id=batch_id,
-                                row_number=row_number,
-                                column_name="unit",
-                                raw_value=unit,
-                                error_code="INVALID_UOM",
-                                error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
-                                created_at=now_utc,
-                            )
+                    import_errors.append(
+                        ImportError(
+                            id=uuid.uuid4(),
+                            batch_id=batch_id,
+                            row_number=row_number,
+                            column_name="unit",
+                            raw_value=unit,
+                            error_code="INVALID_UOM",
+                            error_message=f"Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.",
+                            created_at=now_utc,
                         )
-                        row_has_error = True
+                    )
+                    row_has_error = True
                 unit = resolved_unit
             else:
                 unit = unit or "PCS"
@@ -1005,9 +991,6 @@ class ImportService:
                         "remarks": row_remarks,
                         "sku_normalized": sku_normalized,
                         "original_item_code": original_item_code,
-                        "uom_fallback": uom_fallback,
-                        "original_uom": original_uom,
-                        "uom_note": uom_note,
                     }
                 )
 
@@ -1048,9 +1031,6 @@ class ImportService:
                         "merge_note": None,
                         "sku_normalized": r.get("sku_normalized", False),
                         "original_item_code": r.get("original_item_code"),
-                        "uom_fallback": r.get("uom_fallback", False),
-                        "original_uom": r.get("original_uom"),
-                        "uom_note": r.get("uom_note"),
                     }
                 )
             else:
@@ -1078,9 +1058,6 @@ class ImportService:
 
                 any_sku_norm = any(r.get("sku_normalized") for r in group)
                 orig_codes = [r.get("original_item_code") for r in group if r.get("original_item_code")]
-                any_uom_fb = any(r.get("uom_fallback") for r in group)
-                orig_uoms = [r.get("original_uom") for r in group if r.get("original_uom")]
-                uom_notes = [r.get("uom_note") for r in group if r.get("uom_note")]
 
                 valid_rows.append(
                     {
@@ -1105,9 +1082,6 @@ class ImportService:
                         "merge_note": merge_note,
                         "sku_normalized": any_sku_norm,
                         "original_item_code": orig_codes[0] if orig_codes else None,
-                        "uom_fallback": any_uom_fb,
-                        "original_uom": orig_uoms[0] if orig_uoms else None,
-                        "uom_note": "; ".join(uom_notes) if uom_notes else None,
                     }
                 )
 

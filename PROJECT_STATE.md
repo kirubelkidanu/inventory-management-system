@@ -818,3 +818,39 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
 - **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-04 – Opening Balance Strict UOM Validation Enforcement & Loose Fallback Rollback
+
+### 1. Architectural Scope & Implementation
+- **Strict 1:1 UOM Synonym Groups (`backend/app/services/import_.py`)**:
+  * Refactored `UOM_SYNONYM_GROUPS` to contain strictly 1:1 linguistic aliases without cross-unit grouping:
+    - Volume - Liter: `{"ltr", "liter", "litre", "liters", "litres", "l"}`
+    - Volume - Gallon: `{"gal", "gallon", "gallons"}`
+    - Count: `{"pcs", "pc", "piece", "pieces", "ea", "each", "no", "number"}`
+    - Weight: `{"kg", "kgs", "kilogram", "kilograms"}`
+    - Area: `{"m2", "sqm", "m^2", "sq.m", "square meter"}`
+    - Length: `{"m", "mtr", "meter", "meters"}`
+    - Packaging: `{"bag", "bags"}`, `{"roll", "rolls"}`, `{"pkt", "packet", "packets"}`
+    - Mass: `{"qtl", "quintal", "quintals"}`
+  * Strictly prevented cross-unit grouping: `'pail'` does NOT map to `'Gallon'` or `'Liter'`; `'ltr'` does NOT map to `'Gallon'`; `'roll'` does NOT map to `'PCS'` or `'Meter'`; `'KG'` does NOT map to `'Pkt'`.
+  * Removed loose `fallback_to_catalog_uom` option and `uom_fallback` logic: any dimensional unit mismatch strictly flags an `INVALID_UOM` error (`Unit '{unit}' does not match item default unit '{matched_item.default_unit}'.`). Blank/whitespace UOM cells continue to default safely to `item.default_unit`.
+  * Preserved resilient SKU formatting normalization (exact and alphanumeric dual-index lookup: `'11-OT -00106'`, `'11 OT 00256'`, `'05 TL-00022'`) and ADR-006 duplicate row merging (`(warehouse_id, item_id)`).
+- **Backend Route & Frontend Alignment (`backend/app/api/routes/imports.py`, `frontend/src/features/inventory/OpeningBalancePage.tsx`, `frontend/src/features/inventory/useInventoryData.ts`, `frontend/src/types/index.ts`)**:
+  * Removed `fallback_to_catalog_uom` parameter from FastAPI route `/imports/initial-stock/stage` and `ImportService.stage_initial_stock_file`.
+  * Removed `fallbackToCatalogUom` checkbox, state, and mutation payload from frontend staging flow.
+  * Removed `uom_fallback`, `original_uom`, and `uom_note` from `InitialStockStagedRow` and table rendering.
+  * Preserved `sku_normalized` ("Normalized") and `is_merged` ("Merged (N rows)") badges in the Valid Lines preview.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 267 passed across 16 test modules in 3.38s (100% passing).
+  * Added `test_stage_initial_stock_uom_roll_vs_pcs_raises_invalid_uom` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_uom_pail_vs_gallon_raises_invalid_uom` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_uom_ltr_vs_gallon_raises_invalid_uom` in `backend/tests/test_imports.py`.
+  * Added `test_stage_initial_stock_uom_safe_synonym_ltr_matches_liter` in `backend/tests/test_imports.py`.
+  * Verified resilient SKU normalization and duplicate merging tests pass cleanly.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+

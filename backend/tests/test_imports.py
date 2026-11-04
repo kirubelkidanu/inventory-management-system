@@ -1505,8 +1505,8 @@ async def test_stage_initial_stock_truly_non_existent_sku_logs_invalid_item():
 
 
 @pytest.mark.asyncio
-async def test_stage_initial_stock_uom_fallback_adopts_catalog_default_unit():
-    """Verifies that when fallback_to_catalog_uom=True, dimensional mismatch adopts catalog unit."""
+async def test_stage_initial_stock_uom_roll_vs_pcs_raises_invalid_uom():
+    """Verifies that 'roll' vs 'PCS' raises INVALID_UOM without loose fallback."""
     mock_session = AsyncMock()
     service = ImportService(mock_session)
 
@@ -1535,25 +1535,20 @@ async def test_stage_initial_stock_uom_fallback_adopts_catalog_default_unit():
 
     batch = await service.stage_initial_stock_file(
         user_id=uuid4(),
-        file_name="uom_fallback.csv",
+        file_name="roll_mismatch.csv",
         file_bytes=file_bytes,
         warehouse_id=wh_id,
-        fallback_to_catalog_uom=True,
     )
 
-    assert batch.status == "VALIDATED"
-    assert batch.valid_rows == 1
-    assert batch.error_rows == 0
-    staged_row = batch.staged_data["rows"][0]
-    assert staged_row["unit"] == "PCS"
-    assert staged_row["uom_fallback"] is True
-    assert staged_row["original_uom"] == "roll"
-    assert "adopted catalog default unit 'PCS'" in staged_row["uom_note"]
+    assert batch.valid_rows == 0
+    assert batch.error_rows == 1
+    logged_errors = service.repo.create_errors.call_args[0][0]
+    assert any(err.error_code == "INVALID_UOM" and "roll" in (err.raw_value or "") for err in logged_errors)
 
 
 @pytest.mark.asyncio
-async def test_stage_initial_stock_uom_volume_synonym_pail_maps_to_liter():
-    """Verifies that 'pail' is part of the Volume synonym group and maps to 'Liter' without fallback."""
+async def test_stage_initial_stock_uom_pail_vs_gallon_raises_invalid_uom():
+    """Verifies that 'pail' is strictly distinct and raises INVALID_UOM against 'Gallon'."""
     mock_session = AsyncMock()
     service = ImportService(mock_session)
 
@@ -1564,7 +1559,7 @@ async def test_stage_initial_stock_uom_volume_synonym_pail_maps_to_liter():
         id=item_id,
         item_code="07-PC-00005",
         description="Gloss Paint",
-        default_unit="Liter",
+        default_unit="Gallon",
         is_active=True,
     )
 
@@ -1582,10 +1577,93 @@ async def test_stage_initial_stock_uom_volume_synonym_pail_maps_to_liter():
 
     batch = await service.stage_initial_stock_file(
         user_id=uuid4(),
-        file_name="pail_synonym.csv",
+        file_name="pail_mismatch.csv",
         file_bytes=file_bytes,
         warehouse_id=wh_id,
-        fallback_to_catalog_uom=False,
+    )
+
+    assert batch.valid_rows == 0
+    assert batch.error_rows == 1
+    logged_errors = service.repo.create_errors.call_args[0][0]
+    assert any(err.error_code == "INVALID_UOM" and "pail" in (err.raw_value or "") for err in logged_errors)
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_uom_ltr_vs_gallon_raises_invalid_uom():
+    """Verifies that 'LTR' vs 'Gallon' raises INVALID_UOM because they belong to distinct volume groups."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="07-PC-00006",
+        description="Enamel Paint",
+        default_unit="Gallon",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"07-PC-00006": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["07-PC-00006", "10", "LTR", "450.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="ltr_gallon_mismatch.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
+    )
+
+    assert batch.valid_rows == 0
+    assert batch.error_rows == 1
+    logged_errors = service.repo.create_errors.call_args[0][0]
+    assert any(err.error_code == "INVALID_UOM" and "LTR" in (err.raw_value or "") for err in logged_errors)
+
+
+@pytest.mark.asyncio
+async def test_stage_initial_stock_uom_safe_synonym_ltr_matches_liter():
+    """Verifies that safe 1:1 linguistic synonym 'ltr' matches 'Liter' without error."""
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    wh = Warehouse(id=wh_id, code="WH-001", name="Main Warehouse", is_active=True)
+    item = Item(
+        id=item_id,
+        item_code="07-PC-00007",
+        description="Primer Paint",
+        default_unit="Liter",
+        is_active=True,
+    )
+
+    service.repo.get_warehouse_by_id = AsyncMock(return_value=wh)
+    service.repo.get_items_by_codes = AsyncMock(return_value={"07-PC-00007": item})
+    service.repo.get_existing_opening_balance_item_ids = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    csv_rows = [
+        ["inventory id", "qty", "uom", "unit_cost"],
+        ["07-PC-00007", "8", "ltr", "300.00"],
+    ]
+    file_bytes = make_csv_bytes(csv_rows)
+
+    batch = await service.stage_initial_stock_file(
+        user_id=uuid4(),
+        file_name="ltr_synonym.csv",
+        file_bytes=file_bytes,
+        warehouse_id=wh_id,
     )
 
     assert batch.status == "VALIDATED"
@@ -1593,4 +1671,3 @@ async def test_stage_initial_stock_uom_volume_synonym_pail_maps_to_liter():
     assert batch.error_rows == 0
     staged_row = batch.staged_data["rows"][0]
     assert staged_row["unit"] == "Liter"
-    assert staged_row.get("uom_fallback", False) is False

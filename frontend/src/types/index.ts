@@ -403,9 +403,6 @@ export interface InitialStockStagedRow {
   merge_note?: string | null
   sku_normalized?: boolean
   original_item_code?: string | null
-  uom_fallback?: boolean
-  original_uom?: string | null
-  uom_note?: string | null
 }
 
 export interface InitialStockBatchPreviewResponse {

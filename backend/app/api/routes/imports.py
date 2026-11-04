@@ -313,7 +313,6 @@ async def stage_initial_stock_file(
     project_id: Optional[uuid.UUID] = Form(None),
     transaction_date: Optional[date] = Form(None),
     remarks: Optional[str] = Form(None),
-    fallback_to_catalog_uom: bool = Form(True),
     x_warehouse_id: Optional[uuid.UUID] = Header(None, alias="warehouse_id"),
     current_user: AuthenticatedUser = Depends(
         require_roles("ADMIN", "INVENTORY_MANAGER")
@@ -337,7 +336,6 @@ async def stage_initial_stock_file(
             project_id=project_id,
             transaction_date=transaction_date,
             remarks=remarks,
-            fallback_to_catalog_uom=fallback_to_catalog_uom,
         )
     except TypeError:
         batch = await service.stage_initial_stock_file(
