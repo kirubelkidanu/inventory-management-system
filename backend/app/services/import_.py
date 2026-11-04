@@ -123,6 +123,118 @@ def resolve_canonical_uom(
     return clean_raw, False
 
 
+# Canonical Category Code/Prefix Mappings from docs/PROJECT_SPEC.md Section 2 and Expanded Categories
+STANDARD_PREFIX_TO_CODE: Dict[str, str] = {
+    "01-CM": "01",
+    "02-ST": "02",
+    "03-QR": "03",
+    "04-GL": "04",
+    "05-TL": "05",
+    "06-WD": "06",
+    "07-PC": "07",
+    "08-SN": "08",
+    "09-EL": "09",
+    "10-SF": "10",
+    "11-OT": "11",
+    "12-FL": "12",
+    "13-TB": "13",
+    "14-TY": "14",
+    "14-SN": "14",
+    "14-IZ": "14",
+    "14-XL": "14",
+    "14-BL": "14",
+    "14-ER": "14",
+    "14-HT": "14",
+    "14-CG": "14",
+    # Expanded Categories (15: STATIONERY, 16: HOUSEHOLD, 17: CLEAN, 18: COMPUTER & IT)
+    "15-ST": "15",
+    "16-HH": "16",
+    "16-HS": "16",
+    "17-CL": "17",
+    "18-CP": "18",
+    "18-IT": "18",
+}
+
+# Sheet tab and category name aliases mapped to canonical category codes
+CATEGORY_NAME_AND_TAB_ALIASES: Dict[str, str] = {
+    # Category 15: STATIONERY
+    "STATIONERY": "15",
+    "STATIONARY": "15",
+    "OFFICE SUPPLIES": "15",
+    # Category 16: HOUSEHOLD
+    "HOUSEHOLD": "16",
+    "HOUSE HOLD": "16",
+    # Category 17: CLEAN
+    "CLEAN": "17",
+    "CLEANING": "17",
+    "CLEANING MATERIALS": "17",
+    "JANITORIAL": "17",
+    # Category 18: COMPUTER & IT
+    "COMPUTER & IT": "18",
+    "COMPUTERS & IT": "18",
+    "COMPUTERS": "18",
+    "COMPUTER": "18",
+    "IT": "18",
+    "IT & COMPUTER": "18",
+    "INFORMATION TECHNOLOGY": "18",
+}
+
+# Standard UOM aliases for Item Master staging
+ITEM_MASTER_UOM_ALIASES: Dict[str, str] = {
+    # Count
+    "pcs": "PCS",
+    "pc": "PCS",
+    "piece": "PCS",
+    "pieces": "PCS",
+    "ea": "PCS",
+    "each": "PCS",
+    "no": "PCS",
+    "number": "PCS",
+    # Volume
+    "liter": "Liter",
+    "litre": "Liter",
+    "liters": "Liter",
+    "litres": "Liter",
+    "ltr": "Liter",
+    "l": "Liter",
+    "gal": "Gallon",
+    "gallon": "Gallon",
+    "gallons": "Gallon",
+    # Packaging / Pairs
+    "pkt": "Pkt",
+    "packet": "Pkt",
+    "packets": "Pkt",
+    "pack": "Pkt",
+    "packs": "Pkt",
+    "pair": "Pair",
+    "pairs": "Pair",
+    "pr": "Pair",
+    "prs": "Pair",
+    "bag": "BAG",
+    "bags": "BAG",
+    "roll": "ROLL",
+    "rolls": "ROLL",
+    # Weight / Mass
+    "kg": "KG",
+    "kgs": "KG",
+    "kilogram": "KG",
+    "kilograms": "KG",
+    "qtl": "Qtl",
+    "quintal": "Qtl",
+    "quintals": "Qtl",
+    # Dimension
+    "m2": "M2",
+    "sqm": "M2",
+    "m^2": "M2",
+    "sq.m": "M2",
+    "square meter": "M2",
+    "m": "MTR",
+    "mtr": "MTR",
+    "meter": "MTR",
+    "meters": "MTR",
+}
+
+
 class ImportService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -170,12 +282,21 @@ class ImportService:
         # 2. Pre-fetch categories and existing item codes
         categories_map = await self.repo.get_all_categories()
         fast_category_lookup: Dict[str, Category] = {}
+        categories_by_code: Dict[str, Category] = {}
+
         for key, cat in categories_map.items():
             if not key:
                 continue
             k_upper = key.strip().upper()
             fast_category_lookup[k_upper] = cat
             fast_category_lookup[k_upper.replace(" ", "")] = cat
+
+            if cat.code:
+                c_u = cat.code.strip().upper()
+                categories_by_code[c_u] = cat
+                categories_by_code[c_u.lstrip("0")] = cat
+                categories_by_code[c_u.zfill(2)] = cat
+
             if " - " in k_upper:
                 for part in k_upper.split(" - "):
                     p = part.strip()
@@ -189,33 +310,32 @@ class ImportService:
                         fast_category_lookup.setdefault(p, cat)
                         fast_category_lookup.setdefault(p.replace(" ", ""), cat)
 
-        # Standard category code/prefix mappings from docs/PROJECT_SPEC.md Section 2
-        STANDARD_PREFIX_TO_CODE = {
-            "01-CM": "01",
-            "02-ST": "02",
-            "03-QR": "03",
-            "04-GL": "04",
-            "05-TL": "05",
-            "06-WD": "06",
-            "07-PC": "07",
-            "08-SN": "08",
-            "09-EL": "09",
-            "10-SF": "10",
-            "11-OT": "11",
-            "12-FL": "12",
-            "13-TB": "13",
-            "14-TY": "14",
-            "14-SN": "14",
-            "14-IZ": "14",
-            "14-XL": "14",
-            "14-BL": "14",
-            "14-ER": "14",
-            "14-HT": "14",
-            "14-CG": "14",
-        }
+        for cat in set(categories_map.values()):
+            if cat.code:
+                c_u = cat.code.strip().upper()
+                categories_by_code.setdefault(c_u, cat)
+                categories_by_code.setdefault(c_u.lstrip("0"), cat)
+                categories_by_code.setdefault(c_u.zfill(2), cat)
+                for cp in c_u.split("-"):
+                    if cp:
+                        categories_by_code.setdefault(cp, cat)
+                        categories_by_code.setdefault(cp.lstrip("0"), cat)
+                        categories_by_code.setdefault(cp.zfill(2), cat)
+
+        # Map standard and expanded SKU prefixes (e.g. 15-ST-, 17-CL-) to category objects
         for prefix, cat_code in STANDARD_PREFIX_TO_CODE.items():
-            if cat_code in fast_category_lookup:
-                fast_category_lookup.setdefault(prefix, fast_category_lookup[cat_code])
+            cat = categories_by_code.get(cat_code) or fast_category_lookup.get(cat_code)
+            if cat is not None:
+                fast_category_lookup.setdefault(prefix, cat)
+                fast_category_lookup.setdefault(prefix + "-", cat)
+                fast_category_lookup.setdefault(prefix.replace("-", ""), cat)
+
+        # Map sheet tab and category name aliases (e.g. CLEAN, COMPUTERS, STATIONERY, HOUSEHOLD)
+        for alias, cat_code in CATEGORY_NAME_AND_TAB_ALIASES.items():
+            cat = categories_by_code.get(cat_code) or fast_category_lookup.get(cat_code)
+            if cat is not None:
+                fast_category_lookup.setdefault(alias, cat)
+                fast_category_lookup.setdefault(alias.replace(" ", ""), cat)
 
         candidate_item_codes = list({
             str(data.get("item_code", "")).strip()
@@ -248,28 +368,43 @@ class ImportService:
             raw_unit = row_data.get("default_unit")
             default_unit = str(raw_unit).strip() if raw_unit is not None else ""
 
-            # 1. Corrupt/Draft Row Filter:
-            # If a row has an empty description and empty unit (e.g. 07-PC-D0159), treat as empty/draft row and skip without error
-            if not description and not default_unit:
+            # 1. Corrupt/Draft/Summary Row Filter:
+            # If a row has an empty description and empty unit, or empty item code and empty description, skip without error
+            if (not description and not default_unit) or (not item_code and not description):
+                continue
+            if self._is_summary_or_signature(item_code) or self._is_summary_or_signature(description):
                 continue
 
-            # 2. Steel UOM Defaulting (docs/PROJECT_SPEC.md Section 18 Note 1):
-            # If unit measurement is blank/empty, and item code starts with '02-ST-' or category is 'STEEL', assign default 'PCS'
-            if not default_unit:
+            # 2. Resolve Category across category column, sub/main category, sheet name, and SKU prefix
+            matched_category = self._resolve_category(row_data, item_code, fast_category_lookup)
+
+            # 3. UOM Canonicalization & Safe Fallbacks:
+            # Support standard UOM aliases (PCS, Liter, Pkt, Pair) and default missing units in categories 02, 15, 16, 17, 18 to PCS
+            if default_unit:
+                default_unit = ITEM_MASTER_UOM_ALIASES.get(default_unit.lower(), default_unit)
+            else:
+                cat_code = matched_category.code if matched_category else ""
                 cat_upper = category_str.strip().upper()
                 main_upper = str(row_data.get("main_category", "")).strip().upper()
                 sub_upper = str(row_data.get("sub_category", "")).strip().upper()
                 if (
                     item_code.startswith("02-ST-")
-                    or cat_upper == "STEEL"
-                    or cat_upper.startswith("02-ST")
-                    or cat_upper == "02"
-                    or main_upper == "STEEL"
-                    or sub_upper == "STEEL"
+                    or cat_code in ("02", "15", "16", "17", "18")
+                    or cat_upper in ("STEEL", "STATIONERY", "HOUSEHOLD", "CLEAN", "COMPUTER & IT", "COMPUTERS")
+                    or main_upper in ("STEEL", "STATIONERY", "HOUSEHOLD", "CLEAN", "COMPUTER & IT", "COMPUTERS")
+                    or sub_upper in ("STEEL", "STATIONERY", "HOUSEHOLD", "CLEAN", "COMPUTER & IT", "COMPUTERS")
+                    or any(item_code.startswith(p) for p in ("02-", "15-", "16-", "17-", "18-"))
                 ):
                     default_unit = "PCS"
 
-            # 3. Validate item_code & Existing Catalog Items (DUPLICATE_CODE vs ALREADY_EXISTS)
+            # 4. Safe fallback for description if missing in newly recognized categories
+            if not description:
+                if matched_category is not None and matched_category.code in ("15", "16", "17", "18"):
+                    description = f"{matched_category.name} Item {item_code}"
+                elif any(item_code.startswith(p) for p in ("15-", "16-", "17-", "18-")):
+                    description = f"Item {item_code}"
+
+            # 5. Validate item_code & Existing Catalog Items (DUPLICATE_CODE vs ALREADY_EXISTS)
             if not item_code:
                 import_errors.append(
                     ImportError(
@@ -317,7 +452,7 @@ class ImportService:
             else:
                 seen_file_item_codes.add(item_code)
 
-            # 4. Validate description
+            # 6. Validate description
             if not description:
                 import_errors.append(
                     ImportError(
@@ -333,41 +468,7 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # 5. Validate category across category_str, sub_category, main_category, and item_code prefix
-            matched_category: Optional[Category] = None
-            category_candidates = [
-                category_str,
-                str(row_data.get("sub_category", "")).strip(),
-                str(row_data.get("main_category", "")).strip(),
-            ]
-            if item_code and "-" in item_code:
-                parts = item_code.split("-")
-                category_candidates.append(parts[0])
-                if len(parts) >= 2:
-                    category_candidates.append(f"{parts[0]}-{parts[1]}")
-
-            for cat_cand in category_candidates:
-                if not cat_cand:
-                    continue
-                cand_clean = cat_cand.strip().upper()
-                matched_category = fast_category_lookup.get(cand_clean) or fast_category_lookup.get(cand_clean.replace(" ", ""))
-                if matched_category is not None:
-                    break
-                if " - " in cand_clean:
-                    for part in cand_clean.split(" - "):
-                        p = part.strip()
-                        matched_category = fast_category_lookup.get(p) or fast_category_lookup.get(p.replace(" ", ""))
-                        if matched_category is not None:
-                            break
-                elif "-" in cand_clean:
-                    for part in cand_clean.split("-"):
-                        p = part.strip()
-                        matched_category = fast_category_lookup.get(p) or fast_category_lookup.get(p.replace(" ", ""))
-                        if matched_category is not None:
-                            break
-                if matched_category is not None:
-                    break
-
+            # 7. Validate category
             if matched_category is None:
                 import_errors.append(
                     ImportError(
@@ -383,7 +484,7 @@ class ImportService:
                 )
                 row_has_error = True
 
-            # 6. Validate default_unit
+            # 8. Validate default_unit
             if not default_unit:
                 import_errors.append(
                     ImportError(
@@ -1261,6 +1362,67 @@ class ImportService:
             await self.session.rollback()
             raise
 
+    def _resolve_category(
+        self,
+        row_data: Dict[str, Any],
+        item_code: str,
+        fast_category_lookup: Dict[str, Category],
+    ) -> Optional[Category]:
+        """
+        Dynamically resolves Category via:
+        a. Exact code match: '15', '16', '17', '18'
+        b. Exact name match: 'STATIONERY', 'HOUSEHOLD', 'CLEAN', 'COMPUTER & IT', 'COMPUTERS'
+        c. SKU prefix inference: '15-ST-', '16-HH-', '16-HS-', '17-CL-', '18-CP-', '18-IT-'
+        d. Sheet tab aliases
+        """
+        category_str = str(row_data.get("category") or "").strip()
+        sub_cat = str(row_data.get("sub_category") or "").strip()
+        main_cat = str(row_data.get("main_category") or "").strip()
+
+        category_candidates: List[str] = [category_str, sub_cat, main_cat]
+
+        if item_code:
+            clean_code = item_code.strip().upper()
+            if "-" in clean_code:
+                parts = clean_code.split("-")
+                category_candidates.append(parts[0])
+                if len(parts) >= 2:
+                    category_candidates.append(f"{parts[0]}-{parts[1]}")
+                    category_candidates.append(f"{parts[0]}-{parts[1]}-")
+            al = re.sub(r"[^A-Z0-9]", "", clean_code)
+            if len(al) >= 2:
+                category_candidates.append(al[:2])
+            if len(al) >= 4:
+                category_candidates.append(f"{al[:2]}-{al[2:4]}")
+                category_candidates.append(f"{al[:2]}-{al[2:4]}-")
+                category_candidates.append(al[:4])
+
+        for cat_cand in category_candidates:
+            if not cat_cand:
+                continue
+            cand_clean = cat_cand.strip().upper()
+            matched = (
+                fast_category_lookup.get(cand_clean)
+                or fast_category_lookup.get(cand_clean.replace(" ", ""))
+                or fast_category_lookup.get(cand_clean.replace("-", ""))
+            )
+            if matched is not None:
+                return matched
+            if " - " in cand_clean:
+                for part in cand_clean.split(" - "):
+                    p = part.strip()
+                    matched = fast_category_lookup.get(p) or fast_category_lookup.get(p.replace(" ", ""))
+                    if matched is not None:
+                        return matched
+            elif "-" in cand_clean:
+                for part in cand_clean.split("-"):
+                    p = part.strip()
+                    matched = fast_category_lookup.get(p) or fast_category_lookup.get(p.replace(" ", ""))
+                    if matched is not None:
+                        return matched
+
+        return None
+
     def _parse_csv_rows(self, file_bytes: bytes) -> List[Tuple[int, Dict[str, Any]]]:
         """Parses rows from CSV bytes, returning (row_number, row_dict)."""
         text = file_bytes.decode("utf-8-sig", errors="replace")
@@ -1278,6 +1440,11 @@ class ImportService:
                 continue
 
             row_data = self._extract_row_data(row, header_map)
+            # Strip trailing empty draft rows and non-data summary/signatures
+            if not row_data.get("item_code") and not row_data.get("description") and not row_data.get("default_unit"):
+                continue
+            if self._is_summary_or_signature(row_data.get("item_code")) or self._is_summary_or_signature(row_data.get("description")):
+                continue
             rows.append((idx, row_data))
 
         return rows
@@ -1299,10 +1466,19 @@ class ImportService:
                         continue
 
                     if not header_map:
-                        header_map = self._detect_headers([str(c) if c is not None else "" for c in row_cells])
+                        candidate_map = self._detect_headers([str(c) if c is not None else "" for c in row_cells])
+                        if "item_code" in candidate_map or "description" in candidate_map:
+                            header_map = candidate_map
                         continue
 
                     row_data = self._extract_row_data(row_cells, header_map)
+
+                    # Strip trailing empty draft rows and non-data summary/signatures
+                    if not row_data.get("item_code") and not row_data.get("description") and not row_data.get("default_unit"):
+                        continue
+                    if self._is_summary_or_signature(row_data.get("item_code")) or self._is_summary_or_signature(row_data.get("description")):
+                        continue
+
                     # If category column missing or blank in row, fall back to sheet name
                     if not row_data.get("category"):
                         row_data["category"] = sheet_title
@@ -1328,6 +1504,8 @@ class ImportService:
                 "code",
                 "item id",
                 "item_id",
+                "sku",
+                "inventory_code",
             ):
                 mapping["item_code"] = idx
             elif name in (
@@ -1336,12 +1514,16 @@ class ImportService:
                 "item description",
                 "item_description",
                 "name",
+                "item name",
+                "item desc",
             ):
                 mapping["description"] = idx
             elif name in (
                 "main catagories",
                 "main categories",
                 "major category",
+                "major categories",
+                "major cat",
             ):
                 mapping["main_category"] = idx
                 if "category" not in mapping:
@@ -1350,6 +1532,7 @@ class ImportService:
                 "sub gatagory code",
                 "sub category",
                 "subcategory",
+                "sub categories",
             ):
                 mapping["sub_category"] = idx
                 if "category" not in mapping:
@@ -1358,6 +1541,8 @@ class ImportService:
                 "category",
                 "category_code",
                 "category code",
+                "category name",
+                "categories",
             ):
                 mapping["category"] = idx
             elif name in (
@@ -1366,6 +1551,9 @@ class ImportService:
                 "unit",
                 "default_unit",
                 "uom",
+                "unit of measure",
+                "unit of measurement",
+                "units",
             ):
                 mapping["default_unit"] = idx
 
@@ -1398,10 +1586,10 @@ class ImportService:
     def _is_summary_or_signature(val: Any) -> bool:
         """Checks if a cell value contains summary, total, or signature text that should be skipped."""
         if val is None:
-            return True
+            return False
         s = str(val).strip().lower()
         if not s:
-            return True
+            return False
         summary_prefixes = (
             "total",
             "grand total",

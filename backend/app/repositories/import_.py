@@ -67,9 +67,14 @@ class ImportRepository:
         mapping: Dict[str, Category] = {}
         for cat in categories:
             if cat.code:
-                mapping[cat.code.strip().upper()] = cat
+                c_u = cat.code.strip().upper()
+                mapping[c_u] = cat
+                mapping[c_u.lstrip("0")] = cat
+                mapping[c_u.zfill(2)] = cat
             if cat.name:
-                mapping[cat.name.strip().upper()] = cat
+                n_u = cat.name.strip().upper()
+                mapping[n_u] = cat
+                mapping[n_u.replace(" ", "")] = cat
         return mapping
 
     async def get_existing_item_codes(self, codes: List[str]) -> Set[str]:

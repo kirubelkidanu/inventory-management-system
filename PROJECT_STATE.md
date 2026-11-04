@@ -854,3 +854,34 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
 
+---
+
+## 2026-11-04 – Item Master Catalog Staging Support for Expanded Categories (15, 16, 17, 18)
+
+### 1. Architectural Scope & Implementation
+- **Expanded Database Seed Migration (`database/migrations/005_seed_expanded_categories.sql`, `backend/app/scripts/seed_demo_data.py`)**:
+  * Added Migration 005 to seed official expanded categories with idempotent `ON CONFLICT (code) DO UPDATE`:
+    - Category `15`: `STATIONERY` ("Office Supplies, Paper & Stationery")
+    - Category `16`: `HOUSEHOLD` ("Household Goods, Appliances & Supplies")
+    - Category `17`: `CLEAN` ("Cleaning Materials, Detergents & Janitorial Supplies")
+    - Category `18`: `COMPUTER & IT` ("Computers, IT Hardware & Networking Equipment")
+  * Synced `SEED_CATEGORIES` in `backend/app/scripts/seed_demo_data.py`.
+- **Dynamic Category Resolution Engine (`backend/app/services/import_.py`, `backend/app/repositories/import_.py`)**:
+  * Enhanced `ImportRepository.get_all_categories()` to index categories by exact uppercase code, zero-trimmed code, two-digit zero-padded code, and whitespace-stripped name.
+  * Added `STANDARD_PREFIX_TO_CODE` mapping prefixes (`15-ST-`, `16-HH-`, `16-HS-`, `17-CL-`, `18-CP-`, `18-IT-`) to their canonical codes.
+  * Added `CATEGORY_NAME_AND_TAB_ALIASES` for sheet names and category names: `STATIONERY`, `HOUSEHOLD`, `CLEAN`, `CLEANING`, `COMPUTER & IT`, `COMPUTERS`.
+  * Implemented `_resolve_category(row_data, item_code, fast_category_lookup)` to dynamically resolve categories across category column cells, sub/main category columns, sheet tab names, and item SKU prefixes.
+- **UOM Normalization & Safe Description Fallbacks (`backend/app/services/import_.py`)**:
+  * Standardized UOM mapping (`ITEM_MASTER_UOM_ALIASES`) for `PCS`, `Liter`, `Pkt`, `Pair`, `KG`, `M2`, `MTR`, `BAG`, `ROLL`, etc.
+  * Safe unit defaulting: blank units in categories `02`, `15`, `16`, `17`, and `18` safely default to `PCS`.
+  * Safe description fallback: items in categories 15-18 with missing descriptions fallback to `f"{category.name} Item {item_code}"`.
+  * Stripped trailing empty draft rows and summary/signature rows in `_parse_excel_rows` and `_parse_csv_rows`, eliminating false validation errors.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 269 passed across 16 test modules in 3.75s (100% passing).
+  * Added `test_stage_item_master_expanded_categories_clean_and_stationery` in `backend/tests/test_imports.py`.
+  * Added `test_stage_item_master_sku_prefix_inference_for_expanded_categories` in `backend/tests/test_imports.py`.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,703 modules transformed).
+- **Ledger Invariants**: Dual-write balances and reconciliation invariants remain 100% in balance.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+

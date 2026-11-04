@@ -1671,3 +1671,149 @@ async def test_stage_initial_stock_uom_safe_synonym_ltr_matches_liter():
     assert batch.error_rows == 0
     staged_row = batch.staged_data["rows"][0]
     assert staged_row["unit"] == "Liter"
+@pytest.mark.asyncio
+async def test_stage_item_master_expanded_categories_clean_and_stationery():
+    """Verifies that items under expanded categories (17: CLEAN, 15: STATIONERY, 18: COMPUTER & IT)
+    resolve correctly via sheet tab name, category cell alias, and SKU prefix without INVALID_CATEGORY errors.
+    """
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    clean_id = uuid4()
+    stat_id = uuid4()
+    it_id = uuid4()
+
+    clean_cat = Category(id=clean_id, code="17", name="CLEAN", is_active=True)
+    stat_cat = Category(id=stat_id, code="15", name="STATIONERY", is_active=True)
+    it_cat = Category(id=it_id, code="18", name="COMPUTER & IT", is_active=True)
+
+    categories_map = {
+        "17": clean_cat,
+        "CLEAN": clean_cat,
+        "15": stat_cat,
+        "STATIONERY": stat_cat,
+        "18": it_cat,
+        "COMPUTER & IT": it_cat,
+    }
+
+    service.repo.get_all_categories = AsyncMock(return_value=categories_map)
+    service.repo.get_existing_item_codes = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    excel_data = {
+        "CLEAN": [
+            ["Inventory ID", "Description", "Category", "Unit Measurement"],
+            ["17-CL-00001", "Liquid Floor Detergent 5L", "CLEAN", "Liter"],
+            ["17-CL-00002", "Heavy Duty Cleaning Gloves", "", "Pair"],
+            ["17-CL-00003", "Microfiber Cleaning Cloth", "CLEANING", "pcs"],
+            ["", "", "", ""],
+            ["Total Count: 3", "", "", ""],
+        ],
+        "STATIONERY": [
+            ["Inventory ID", "Description", "Major Category", "Unit"],
+            ["15-ST-00001", "Ballpoint Pens Blue 0.7mm", "STATIONERY", "Pkt"],
+            ["15-ST-00002", "A4 Copy Paper 80gsm Box", "", ""],
+        ],
+        "COMPUTERS": [
+            ["Inventory ID", "Description", "Category", "Unit"],
+            ["18-CP-00001", "Wireless Optical Mouse", "COMPUTER & IT", "PCS"],
+            ["18-IT-00002", "Cat6 Network Cable 305m", "COMPUTERS", "ROLL"],
+        ],
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_item_master_file(
+        user_id=uuid4(),
+        file_name="expanded_catalog.xlsx",
+        file_bytes=file_bytes,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.error_rows == 0
+    assert batch.valid_rows == 7
+    items = batch.staged_data["items"]
+    items_by_code = {it["item_code"]: it for it in items}
+
+    # Verify Category 17 (CLEAN)
+    assert items_by_code["17-CL-00001"]["category_id"] == str(clean_id)
+    assert items_by_code["17-CL-00001"]["category_code"] == "17"
+    assert items_by_code["17-CL-00001"]["default_unit"] == "Liter"
+
+    assert items_by_code["17-CL-00002"]["category_id"] == str(clean_id)
+    assert items_by_code["17-CL-00002"]["default_unit"] == "Pair"
+
+    assert items_by_code["17-CL-00003"]["category_id"] == str(clean_id)
+    assert items_by_code["17-CL-00003"]["default_unit"] == "PCS"
+
+    # Verify Category 15 (STATIONERY)
+    assert items_by_code["15-ST-00001"]["category_id"] == str(stat_id)
+    assert items_by_code["15-ST-00001"]["default_unit"] == "Pkt"
+
+    assert items_by_code["15-ST-00002"]["category_id"] == str(stat_id)
+    assert items_by_code["15-ST-00002"]["default_unit"] == "PCS"
+
+    # Verify Category 18 (COMPUTER & IT)
+    assert items_by_code["18-CP-00001"]["category_id"] == str(it_id)
+    assert items_by_code["18-CP-00001"]["default_unit"] == "PCS"
+
+    assert items_by_code["18-IT-00002"]["category_id"] == str(it_id)
+    assert items_by_code["18-IT-00002"]["default_unit"] == "ROLL"
+
+
+@pytest.mark.asyncio
+async def test_stage_item_master_sku_prefix_inference_for_expanded_categories():
+    """Verifies that SKU prefix inference correctly resolves categories 15, 16, 17, and 18
+    even when category cell is blank and sheet name is generic.
+    """
+    mock_session = AsyncMock()
+    service = ImportService(mock_session)
+
+    stat_id = uuid4()
+    hh_id = uuid4()
+    clean_id = uuid4()
+    it_id = uuid4()
+
+    stat_cat = Category(id=stat_id, code="15", name="STATIONERY", is_active=True)
+    hh_cat = Category(id=hh_id, code="16", name="HOUSEHOLD", is_active=True)
+    clean_cat = Category(id=clean_id, code="17", name="CLEAN", is_active=True)
+    it_cat = Category(id=it_id, code="18", name="COMPUTER & IT", is_active=True)
+
+    categories_map = {
+        "15": stat_cat,
+        "16": hh_cat,
+        "17": clean_cat,
+        "18": it_cat,
+    }
+
+    service.repo.get_all_categories = AsyncMock(return_value=categories_map)
+    service.repo.get_existing_item_codes = AsyncMock(return_value=set())
+    service.repo.create_batch = AsyncMock()
+    service.repo.create_errors = AsyncMock()
+
+    excel_data = {
+        "Sheet1": [
+            ["Item Code", "Item Description", "Category", "Unit"],
+            ["15-ST-00020", "Stapler Medium", "", "PCS"],
+            ["16-HH-00005", "Ceramic Mug Set", "", "Set"],
+            ["17-CL-00014", "Glass Cleaner Spray", "", "Liter"],
+            ["18-IT-00010", "USB Flash Drive 64GB", "", "PCS"],
+        ]
+    }
+    file_bytes = make_excel_bytes(excel_data)
+
+    batch = await service.stage_item_master_file(
+        user_id=uuid4(),
+        file_name="sku_prefix_test.xlsx",
+        file_bytes=file_bytes,
+    )
+
+    assert batch.status == "VALIDATED"
+    assert batch.error_rows == 0
+    assert batch.valid_rows == 4
+
+    items = {it["item_code"]: it for it in batch.staged_data["items"]}
+    assert items["15-ST-00020"]["category_id"] == str(stat_id)
+    assert items["16-HH-00005"]["category_id"] == str(hh_id)
+    assert items["17-CL-00014"]["category_id"] == str(clean_id)
+    assert items["18-IT-00010"]["category_id"] == str(it_id)

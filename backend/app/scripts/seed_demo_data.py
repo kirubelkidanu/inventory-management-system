@@ -86,6 +86,10 @@ SEED_CATEGORIES = [
     {"code": "12", "name": "FL", "description": "Fuel & Lubricants"},
     {"code": "13", "name": "TB", "description": "Tyres & Batteries"},
     {"code": "14", "name": "SPARE PART", "description": "Vehicle & Heavy Machinery Spare Parts"},
+    {"code": "15", "name": "STATIONERY", "description": "Office Supplies, Paper & Stationery"},
+    {"code": "16", "name": "HOUSEHOLD", "description": "Household Goods, Appliances & Supplies"},
+    {"code": "17", "name": "CLEAN", "description": "Cleaning Materials, Detergents & Janitorial Supplies"},
+    {"code": "18", "name": "COMPUTER & IT", "description": "Computers, IT Hardware & Networking Equipment"},
 ]
 
 # Master Catalog Items
