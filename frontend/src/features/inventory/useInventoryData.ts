@@ -5,6 +5,8 @@ import type {
   ItemDeleteResult,
   ItemBulkDeleteResult,
   Category,
+  CategoryCreatePayload,
+  CategoryUpdatePayload,
   Warehouse,
   InventoryBalance,
   StockMovement,
@@ -61,14 +63,59 @@ export interface ItemUpdatePayload {
   is_active?: boolean
 }
 
-export function useCategories() {
+export function useCategories(options?: { includeArchived?: boolean; search?: string }) {
+  const includeArchived = options?.includeArchived ?? false
+  const search = options?.search ?? ''
   return useQuery<Category[]>({
-    queryKey: ['categories'],
+    queryKey: ['categories', { includeArchived, search }],
     queryFn: async () => {
-      const response = await api.get<Category[]>('/categories')
+      const params = new URLSearchParams()
+      if (includeArchived) params.append('include_archived', 'true')
+      if (search) params.append('search', search)
+      const queryStr = params.toString() ? `?${params.toString()}` : ''
+      const response = await api.get<Category[]>(`/categories${queryStr}`)
       return response.data
     },
-    staleTime: 60 * 1000,
+    staleTime: 30 * 1000,
+  })
+}
+
+export function useCreateCategory() {
+  const queryClient = useQueryClient()
+  return useMutation<Category, Error, CategoryCreatePayload>({
+    mutationFn: async (payload) => {
+      const response = await api.post<Category>('/categories', payload)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories'] })
+    },
+  })
+}
+
+export function useUpdateCategory() {
+  const queryClient = useQueryClient()
+  return useMutation<Category, Error, { id: string; data: CategoryUpdatePayload }>({
+    mutationFn: async ({ id, data }) => {
+      const response = await api.put<Category>(`/categories/${id}`, data)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories'] })
+    },
+  })
+}
+
+export function useToggleCategoryStatus() {
+  const queryClient = useQueryClient()
+  return useMutation<Category, Error, { id: string; is_active?: boolean }>({
+    mutationFn: async ({ id, is_active }) => {
+      const response = await api.patch<Category>(`/categories/${id}/status`, { is_active })
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['categories'] })
+    },
   })
 }
 

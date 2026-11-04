@@ -885,3 +885,53 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Ledger Invariants**: Dual-write balances and reconciliation invariants remain 100% in balance.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
 
+
+
+---
+
+## 2026-11-04 – Category Master Management CRUD Implementation & Admin UI
+
+### 1. Architectural Scope & Implementation
+- **Backend Schemas (`backend/app/schemas/category.py`)**:
+  * `CategoryBase`: Normalized `code` (trimmed & uppercased, 1-50 chars), `name` (trimmed, 1-255 chars), `description` (optional text).
+  * `CategoryCreate`: Strict validation upholding `code` and `name` rules.
+  * `CategoryUpdate`: Optional update fields for `name`, `description`, and `is_active`.
+  * `CategoryStatusUpdate`: Dedicated payload for toggling category active status.
+  * `CategoryRead`: Extended schema returning canonical category details plus computed active `item_count: int = 0`.
+- **Backend Repository Layer (`backend/app/repositories/category.py`)**:
+  * Enhanced `get_categories(include_archived=False, search=None)` with `LEFT OUTER JOIN items (is_active=True)` grouping by `Category.id` to compute live active `item_count`.
+  * Implemented case-insensitive `get_by_code(code)` and `get_by_id(id)`.
+  * Implemented `create(category_in)` and `update(category, update_data)`.
+  * Implemented `delete(category)` soft-archiving (`is_active = False`) to safeguard database referential integrity (`items.category_id REFERENCES categories(id) ON DELETE RESTRICT`).
+  * Implemented `create_audit_log` with `action='CREATE'` and `action='UPDATE'` strictly complying with database `audit_logs_action_check` constraint.
+- **Backend Service & Route Security (`backend/app/services/category.py`, `backend/app/api/routes/categories.py`)**:
+  * `create_category`: Enforces unique code check, raising HTTP 409 Conflict with descriptive message if code exists; creates audit log with `action='CREATE'`.
+  * `update_category`: Enforces unique code check if code changed; generates warning note if deactivating category with active items; creates audit log with `action='UPDATE'`.
+  * `toggle_status`: Dedicated endpoint `PATCH /api/v1/categories/{id}/status` to toggle active status with audit trail.
+  * `delete_category`: Soft-archives category via `DELETE /api/v1/categories/{id}`.
+  * Role Authorization: `GET /api/v1/categories` open to all authenticated users for dropdown lookups; `POST`, `PUT`, `PATCH /status`, and `DELETE` strictly restricted to `ADMIN` role via `require_roles("ADMIN")` returning HTTP 403 Forbidden for non-admin users.
+  * Registered dual decorators (`@router.get("/")` and `@router.get("")`) ensuring reverse URL resolution maps cleanly to `/api/v1/categories`.
+- **Frontend Architecture & Administration UI (`frontend/src/features/admin/`, `frontend/src/features/inventory/useInventoryData.ts`, `frontend/src/types/index.ts`)**:
+  * Extended `Category` TypeScript type with `item_count?: number` and defined `CategoryCreatePayload` / `CategoryUpdatePayload`.
+  * Added React Query hooks: `useCategories({ includeArchived, search })`, `useCreateCategory()`, `useUpdateCategory()`, and `useToggleCategoryStatus()`.
+  * `CategoryModal.tsx`: Enterprise modal with Zod + React Hook Form validation, code auto-uppercasing (locked during edits to preserve item SKU prefixes), name, description, active toggle, and inline 409 duplicate code error handling.
+  * `CategoriesPage.tsx`: Full Category Master management interface:
+    - Summary KPI cards: Total Categories, Active Categories, and Archived Categories.
+    - Search filter by code/name/description + "Include archived" toggle.
+    - Responsive enterprise table displaying code badges, names, descriptions, active item count pills, status badges (`Active` / `Archived`), and action buttons (`Edit`, `Activate` / `Archive`).
+    - Guarded controls: Create, Edit, and Status Toggle buttons available exclusively to `ADMIN` users; non-admins receive a read-only catalog view.
+  * Mounted routes `/admin/categories` and `/categories` redirect in `App.tsx`.
+  * Added "Category Master" navigation item under "Inventory & Catalog" in `AppLayout.tsx`.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 268 passed in 3.94s across 16 test modules (100% passing).
+  * Comprehensive test suite in `backend/tests/test_categories.py` covering:
+    - Canonical route registration & reverse URL lookup.
+    - Authentication enforcement & 403 Forbidden for non-admin roles.
+    - 201 Created on valid category creation with audit log verification.
+    - 409 Conflict on duplicate category code.
+    - Aggregated `item_count` calculation and archived filter query parameters.
+    - PUT updates and PATCH status toggles with audit logging.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
+- **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

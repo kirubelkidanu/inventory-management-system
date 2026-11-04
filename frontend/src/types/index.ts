@@ -19,8 +19,23 @@ export interface Category {
   name: string
   description?: string | null
   is_active: boolean
+  item_count?: number
   created_at?: string
   updated_at?: string
+}
+
+export interface CategoryCreatePayload {
+  code: string
+  name: string
+  description?: string | null
+  is_active?: boolean
+}
+
+export interface CategoryUpdatePayload {
+  code?: string
+  name?: string
+  description?: string | null
+  is_active?: boolean
 }
 
 export interface Warehouse {

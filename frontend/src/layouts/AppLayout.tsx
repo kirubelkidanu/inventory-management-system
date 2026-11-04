@@ -8,6 +8,7 @@ import {
   PackageCheck,
   PackagePlus,
   Tags,
+  FolderTree,
   ClipboardList,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -51,6 +52,7 @@ const navigationSections: NavSection[] = [
       { name: 'Inventory Balances', href: '/inventory', icon: PackageCheck },
       { name: 'Opening Balance', href: '/opening-balance', icon: PackagePlus },
       { name: 'Item Master', href: '/items', icon: Tags },
+      { name: 'Category Master', href: '/admin/categories', icon: FolderTree },
     ],
   },
   {

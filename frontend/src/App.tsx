@@ -18,6 +18,7 @@ import { ISTVPage } from '@/features/transactions/ISTVPage'
 import { ISTRVPage } from '@/features/transactions/ISTRVPage'
 import { SRVPage } from '@/features/transactions/SRVPage'
 import { AdjustmentPage } from '@/features/transactions/AdjustmentPage'
+import { CategoriesPage } from '@/features/admin/CategoriesPage'
 import { TrialBalancePage } from '@/features/reports/TrialBalancePage'
 import { InTransitPage } from '@/features/reports/InTransitPage'
 import { ReconciliationPage } from '@/features/reconciliation/ReconciliationPage'
@@ -50,6 +51,8 @@ export const App: React.FC = () => {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/inventory" element={<InventoryBalancesPage />} />
                 <Route path="/items" element={<ItemsPage />} />
+                <Route path="/admin/categories" element={<CategoriesPage />} />
+                <Route path="/categories" element={<Navigate to="/admin/categories" replace />} />
                 <Route path="/opening-balance" element={<OpeningBalancePage />} />
 
                 {/* Sites & Locations */}
