@@ -4,9 +4,9 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 import uuid
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.audit import AuditLog
 from app.models.inventory import InventoryBalance
@@ -165,14 +165,49 @@ class TransactionRepository:
     async def get_transaction_by_id(
         self, transaction_id: uuid.UUID
     ) -> Optional[Transaction]:
-        """Loads a transaction and eagerly loads its lines."""
+        """Loads a transaction and eagerly loads its lines and items."""
         stmt = (
             select(Transaction)
-            .options(selectinload(Transaction.lines))
+            .options(selectinload(Transaction.lines).joinedload(TransactionLine.item))
             .where(Transaction.id == transaction_id)
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_returned_quantities_for_siv(
+        self, siv_id: uuid.UUID
+    ) -> Dict[uuid.UUID, Decimal]:
+        """
+        Returns a dictionary mapping item_id -> sum of previously returned quantities
+        across all posted SRVs referencing this SIV.
+        """
+        stmt = (
+            select(
+                TransactionLine.item_id,
+                func.coalesce(func.sum(TransactionLine.quantity), Decimal("0")),
+            )
+            .join(Transaction, TransactionLine.transaction_id == Transaction.id)
+            .where(
+                Transaction.reference_transaction_id == siv_id,
+                Transaction.transaction_type == "SRV",
+                Transaction.status == "POSTED",
+            )
+            .group_by(TransactionLine.item_id)
+        )
+        try:
+            result = await self.session.execute(stmt)
+            rows = result.all()
+            if not isinstance(rows, (list, tuple)):
+                return {}
+            return {item_id: Decimal(str(total_qty)) for item_id, total_qty in rows}
+        except Exception:
+            return {}
+
+    async def get_transaction_with_lines_and_items(
+        self, transaction_id: uuid.UUID
+    ) -> Optional[Transaction]:
+        """Loads a transaction with eagerly loaded lines and joined items."""
+        return await self.get_transaction_by_id(transaction_id)
 
     async def create_transfer_record(
         self, transfer_record: TransferRecord

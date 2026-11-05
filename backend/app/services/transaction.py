@@ -23,6 +23,8 @@ from app.schemas.transaction import (
     ISTVCreate,
     SIVCreate,
     SRVCreate,
+    SIVReturnableItemsResponse,
+    SIVReturnableLine,
     OpeningBalanceCreate,
     OpeningBalanceLineCreate,
 )
@@ -824,14 +826,18 @@ class TransactionService:
            - Must exist (404 if not found).
            - Must be transaction_type == "SIV" (400 if not).
            - Must be status == "POSTED" (400 if not).
-        3. Verifies all returned item IDs were part of the referenced SIV line items (400 if not).
-        4. Acquires row locks on inventory_balances for warehouse and items in deterministic order.
-        5. Creates Transaction record with status 'POSTED' and reference_transaction_id=payload.reference_siv_id.
-        6. Creates TransactionLine records.
-        7. Updates inventory_balances (increments quantity_on_hand).
-        8. Appends immutable StockMovement records (type 'IN', positive signed_quantity, running balance).
-        9. Records audit log.
-        10. Commits atomically in one PostgreSQL transaction; rolls back on any error.
+        3. Queries cumulative previously returned quantities across all posted SRVs for this SIV.
+        4. Verifies returned items were part of SIV and validates over-return prevention:
+           - max_returnable = siv_issued_qty - previously_returned_qty
+           - Rejects if line.quantity > max_returnable with HTTP 400 Bad Request.
+        5. Resolves valuation / unit_price (inherits from SIV line, or payload override, or latest inbound cost).
+        6. Acquires row locks on inventory_balances for warehouse and items in deterministic order.
+        7. Creates Transaction record with status 'POSTED' and reference_transaction_id=ref_siv_id.
+        8. Creates TransactionLine records with unit_price persisted.
+        9. Updates inventory_balances (increments quantity_on_hand).
+        10. Appends immutable StockMovement records (type 'IN', positive signed_quantity, running balance).
+        11. Records compliant audit log (action='POST', entity_type='TRANSACTION').
+        12. Commits atomically in one PostgreSQL transaction; rolls back on any error.
         """
         if not payload.lines:
             raise HTTPException(
@@ -853,6 +859,13 @@ class TransactionService:
                     detail=f"Line quantity must be greater than zero. Received: {line.quantity}",
                 )
 
+        ref_siv_id = payload.reference_siv_id or payload.reference_transaction_id
+        if not ref_siv_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Referenced SIV ID is required for Store Return Voucher (SRV).",
+            )
+
         parsed_user_id = _to_uuid(user_id)
         tx_date = payload.transaction_date or date.today()
         tx_number = generate_transaction_number("SRV", tx_date)
@@ -861,39 +874,68 @@ class TransactionService:
 
         try:
             # 1. Fetch referenced transaction
-            ref_tx = await self.repo.get_transaction_by_id(payload.reference_siv_id)
+            ref_tx = await self.repo.get_transaction_by_id(ref_siv_id)
             if ref_tx is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Referenced SIV {payload.reference_siv_id} not found.",
+                    detail=f"Referenced SIV {ref_siv_id} not found.",
                 )
             if ref_tx.transaction_type != "SIV":
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Referenced transaction {payload.reference_siv_id} is not an SIV (found {ref_tx.transaction_type}).",
+                    detail=f"Referenced transaction {ref_siv_id} is not an SIV (found {ref_tx.transaction_type}).",
                 )
             if ref_tx.status != "POSTED":
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Referenced SIV {payload.reference_siv_id} is not POSTED (status is {ref_tx.status}).",
+                    detail=f"Referenced SIV {ref_siv_id} is not POSTED (status is {ref_tx.status}).",
                 )
 
-            # 2. Verify all returned item IDs exist on referenced SIV
-            siv_item_ids = {line.item_id for line in (ref_tx.lines or [])}
+            # 2. Query cumulative previously returned quantities for this SIV
+            get_ret_fn = getattr(self.repo, "get_returned_quantities_for_siv", None)
+            if callable(get_ret_fn):
+                returned_quantities = await get_ret_fn(ref_siv_id)
+            else:
+                returned_quantities = {}
+            if not isinstance(returned_quantities, dict):
+                returned_quantities = {}
+
+            # Index SIV lines by item_id
+            siv_qty_by_item: dict[uuid.UUID, Decimal] = {}
+            siv_line_by_item: dict[uuid.UUID, TransactionLine] = {}
+            for sl in (ref_tx.lines or []):
+                siv_qty_by_item[sl.item_id] = siv_qty_by_item.get(sl.item_id, Decimal("0")) + sl.quantity
+                siv_line_by_item[sl.item_id] = sl
+
+            # 3. Verify returned items and enforce over-return prevention
             for line in payload.lines:
-                if line.item_id not in siv_item_ids:
+                sl = siv_line_by_item.get(line.item_id)
+                if sl is None:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Item {line.item_id} was not issued on referenced SIV {payload.reference_siv_id}.",
+                        detail=f"Item {line.item_id} was not issued on referenced SIV {ref_siv_id}.",
+                    )
+                issued_qty = siv_qty_by_item[line.item_id]
+                prev_returned = returned_quantities.get(line.item_id, Decimal("0"))
+                max_returnable = issued_qty - prev_returned
+                if line.quantity > max_returnable:
+                    item_code = ""
+                    if getattr(sl, "item", None) and getattr(sl.item, "item_code", None):
+                        item_code = sl.item.item_code
+                    else:
+                        item_code = str(line.item_id)
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Return quantity ({line.quantity}) exceeds remaining returnable quantity ({max_returnable}) for item {item_code}.",
                     )
 
-            # 3. Deterministic balance row locking
+            # 4. Deterministic balance row locking
             locked_balances = await self.repo.lock_inventory_balances_for_update(
                 warehouse_id=payload.warehouse_id,
                 item_ids=item_ids,
             )
 
-            # 4. Create Transaction header
+            # 5. Create Transaction header
             transaction = Transaction(
                 id=tx_id,
                 transaction_number=tx_number,
@@ -902,16 +944,26 @@ class TransactionService:
                 transaction_date=tx_date,
                 warehouse_id=payload.warehouse_id,
                 project_id=payload.project_id or ref_tx.project_id,
-                reference_transaction_id=payload.reference_siv_id,
+                reference_transaction_id=ref_siv_id,
                 remarks=payload.remarks,
                 created_by=parsed_user_id,
                 created_at=now_utc,
                 posted_by=parsed_user_id,
                 posted_at=now_utc,
             )
-            # 5. Create Transaction lines
+
+            # 6. Create Transaction lines with valuation inheritance
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
+                sl = siv_line_by_item[line_input.item_id]
+                unit_price = line_input.unit_price
+                if unit_price is None or unit_price == 0:
+                    unit_price = sl.unit_price
+                if (unit_price is None or unit_price == 0) and hasattr(self.repo, "get_latest_inbound_unit_price"):
+                    unit_price = await self.repo.get_latest_inbound_unit_price(
+                        line_input.item_id, payload.warehouse_id
+                    )
+
                 line = TransactionLine(
                     id=uuid.uuid4(),
                     transaction_id=tx_id,
@@ -919,6 +971,7 @@ class TransactionService:
                     item_id=line_input.item_id,
                     quantity=line_input.quantity,
                     unit=line_input.unit,
+                    unit_price=unit_price,
                     remarks=line_input.remarks,
                 )
                 lines.append(line)
@@ -928,7 +981,7 @@ class TransactionService:
             await self.repo.create_transaction_lines(lines)
             await self.session.flush()
 
-            # 6. Update balances and append stock movements (IN)
+            # 7. Update balances and append stock movements (IN)
             for line in lines:
                 balance = await self.repo.get_or_create_balance(
                     warehouse_id=payload.warehouse_id,
@@ -951,10 +1004,10 @@ class TransactionService:
                     movement_date=tx_date,
                 )
 
-            # 7. Record audit log
+            # 8. Record compliant audit log
             await self.repo.create_audit_log(
                 actor_user_id=parsed_user_id,
-                action="POST_SRV",
+                action="POST",
                 entity_type="TRANSACTION",
                 entity_id=str(tx_id),
                 before_state=None,
@@ -963,12 +1016,12 @@ class TransactionService:
                     "transaction_type": "SRV",
                     "status": "POSTED",
                     "warehouse_id": str(payload.warehouse_id),
-                    "reference_siv_id": str(payload.reference_siv_id),
+                    "reference_siv_id": str(ref_siv_id),
                     "lines_count": len(lines),
                     "total_quantity": str(sum(l.quantity for l in lines)),
                 },
-                change_summary=f"Created and posted SRV {tx_number} returning stock against SIV {payload.reference_siv_id}.",
-                reason="Store Return Voucher",
+                change_summary=f"Created and posted SRV {tx_number} returning stock against SIV {ref_tx.transaction_number or ref_siv_id}.",
+                reason=payload.remarks or "Store Return Voucher",
             )
 
             await self.session.commit()
@@ -978,6 +1031,76 @@ class TransactionService:
         except Exception:
             await self.session.rollback()
             raise
+
+    async def get_siv_returnable_items(
+        self, siv_id: uuid.UUID
+    ) -> SIVReturnableItemsResponse:
+        """
+        Retrieves returnable items and metadata for an SIV voucher.
+        Calculates already_returned_quantity and remaining_returnable_quantity
+        for each item based on all posted SRVs referencing this SIV.
+        """
+        siv = await self.repo.get_transaction_with_lines_and_items(siv_id)
+        if siv is None:
+            siv = await self.repo.get_transaction_by_id(siv_id)
+        if siv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"SIV voucher {siv_id} not found.",
+            )
+        if siv.transaction_type != "SIV":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Transaction {siv_id} is not an SIV (found {siv.transaction_type}).",
+            )
+        if siv.status != "POSTED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"SIV voucher {siv_id} is not POSTED (status is {siv.status}).",
+            )
+
+        get_ret_fn = getattr(self.repo, "get_returned_quantities_for_siv", None)
+        if callable(get_ret_fn):
+            returned_quantities = await get_ret_fn(siv_id)
+        else:
+            returned_quantities = {}
+        if not isinstance(returned_quantities, dict):
+            returned_quantities = {}
+
+        lines: List[SIVReturnableLine] = []
+        for line in siv.lines or []:
+            already_returned = returned_quantities.get(line.item_id, Decimal("0"))
+            remaining = max(Decimal("0"), line.quantity - already_returned)
+            item_code = ""
+            desc = ""
+            if getattr(line, "item", None):
+                item_code = getattr(line.item, "item_code", "") or ""
+                desc = getattr(line.item, "description", "") or ""
+            if not item_code:
+                item_code = str(line.item_id)
+
+            lines.append(
+                SIVReturnableLine(
+                    item_id=line.item_id,
+                    item_code=item_code,
+                    description=desc,
+                    unit=line.unit,
+                    unit_price=line.unit_price,
+                    issued_quantity=line.quantity,
+                    already_returned_quantity=already_returned,
+                    remaining_returnable_quantity=remaining,
+                )
+            )
+
+        return SIVReturnableItemsResponse(
+            transaction_id=siv.id,
+            transaction_number=siv.transaction_number,
+            warehouse_id=siv.warehouse_id,
+            project_id=siv.project_id,
+            siv_no=siv.siv_no,
+            transaction_date=siv.transaction_date,
+            lines=lines,
+        )
 
     async def create_and_post_adjustment(
         self,

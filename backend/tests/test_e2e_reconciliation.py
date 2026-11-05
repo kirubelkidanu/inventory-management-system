@@ -245,6 +245,26 @@ class StatefulTransactionRepository:
             ]
         return tx
 
+    async def get_returned_quantities_for_siv(self, siv_id: UUID) -> Dict[UUID, Decimal]:
+        returned: Dict[UUID, Decimal] = {}
+        for tx in self.store.transactions.values():
+            if tx.reference_transaction_id == siv_id and tx.transaction_type == "SRV" and tx.status == "POSTED":
+                lines = [l for l in self.store.transaction_lines.values() if l.transaction_id == tx.id]
+                for l in lines:
+                    returned[l.item_id] = returned.get(l.item_id, Decimal("0")) + Decimal(str(l.quantity))
+        return returned
+
+    async def get_transaction_with_lines_and_items(self, transaction_id: UUID) -> Optional[Transaction]:
+        return await self.get_transaction_by_id(transaction_id)
+
+    async def get_latest_inbound_unit_price(
+        self, item_id: UUID, warehouse_id: Optional[UUID] = None
+    ) -> Optional[Decimal]:
+        for l in reversed(list(self.store.transaction_lines.values())):
+            if l.item_id == item_id and getattr(l, "unit_price", None) is not None and l.unit_price > 0:
+                return l.unit_price
+        return None
+
     async def create_transfer_record(
         self, transfer_record: TransferRecord
     ) -> TransferRecord:

@@ -276,6 +276,70 @@ async def test_service_trial_balance_report():
 
 
 @pytest.mark.asyncio
+async def test_service_trial_balance_renders_srv_in_quantity_unit_price_and_total_value():
+    """Confirms SRV Store Return Voucher movements render in_quantity, unit_price, and calculated total_price in Trial Balance."""
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+
+    fake_srv_row = {
+        "movement_id": uuid4(),
+        "movement_date": date.today(),
+        "created_at": datetime.now(timezone.utc),
+        "transaction_id": uuid4(),
+        "transaction_number": "SRV-20261105-9999",
+        "transaction_type": "SRV",
+        "external_reference": None,
+        "supplier_name": None,
+        "invoice_no": None,
+        "received_grv_no": None,
+        "store_no": None,
+        "requested_from": None,
+        "project_dept": "Foundation Pouring",
+        "requested_no": None,
+        "siv_no": "SIV-20261105-001",
+        "movement_type": "IN",
+        "quantity": Decimal("15.0000"),
+        "signed_quantity": Decimal("15.0000"),
+        "running_balance": Decimal("315.0000"),
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Cement Grade 42.5N",
+        "category_name": "Cement & Aggregates",
+        "unit": "BAG",
+        "unit_price": Decimal("850.0000"),
+        "warehouse_id": wh_id,
+        "warehouse_code": "KZ-WH-001",
+        "warehouse_name": "Kazanchis Main Warehouse",
+        "project_name": "Kazanchis Commercial Complex",
+        "plate_no": None,
+        "driver_name": None,
+        "remarks": "Surplus return against SIV",
+        "entered_by_name": "Store Keeper",
+    }
+
+    service.repo.get_trial_balance = AsyncMock(
+        return_value=([fake_srv_row], 1, Decimal("15.0000"), Decimal("0.0000"))
+    )
+
+    response = await service.get_trial_balance_report(
+        warehouse_id=wh_id, page=1, page_size=50
+    )
+
+    assert response.total_count == 1
+    assert response.total_in == Decimal("15.0000")
+    assert response.total_out == Decimal("0.0000")
+    srv_item = response.items[0]
+    assert srv_item.transaction_type == "SRV"
+    assert srv_item.in_quantity == Decimal("15.0000")
+    assert srv_item.out_quantity == Decimal("0.0000")
+    assert srv_item.unit_price == Decimal("850.0000")
+    assert srv_item.total_price == Decimal("12750.0000")
+
+
+@pytest.mark.asyncio
 async def test_service_export_trial_balance_excel():
     mock_session = AsyncMock()
     service = ReportService(mock_session)

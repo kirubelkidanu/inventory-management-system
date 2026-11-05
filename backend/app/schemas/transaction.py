@@ -1,7 +1,7 @@
 # backend/app/schemas/transaction.py
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -121,16 +121,30 @@ class SRVLineCreate(BaseModel):
     item_id: uuid.UUID
     quantity: Decimal = Field(..., gt=0, description="Quantity must be strictly positive")
     unit: str = Field(..., min_length=1, max_length=50, description="Unit of measurement")
+    unit_price: Optional[Decimal] = Field(None, ge=0, description="Inherited or overridden unit cost")
     remarks: Optional[str] = None
 
 
 class SRVCreate(BaseModel):
-    reference_siv_id: uuid.UUID
+    reference_siv_id: Optional[uuid.UUID] = None
+    reference_transaction_id: Optional[uuid.UUID] = None
     warehouse_id: uuid.UUID
     project_id: Optional[uuid.UUID] = None
     transaction_date: date = Field(default_factory=date.today)
     remarks: Optional[str] = None
     lines: List[SRVLineCreate] = Field(..., min_length=1, description="At least one line required")
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_reference(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            ref = values.get("reference_siv_id") or values.get("reference_transaction_id")
+            if ref:
+                values["reference_siv_id"] = ref
+                values["reference_transaction_id"] = ref
+            elif not values.get("reference_siv_id") and not values.get("reference_transaction_id"):
+                raise ValueError("A referenced Store Issue Voucher (reference_siv_id or reference_transaction_id) is required.")
+        return values
 
     @field_validator("lines")
     @classmethod
@@ -139,6 +153,27 @@ class SRVCreate(BaseModel):
         if len(item_ids) != len(set(item_ids)):
             raise ValueError("Duplicate item in transaction lines is not allowed (ADR-006).")
         return lines
+
+
+class SIVReturnableLine(BaseModel):
+    item_id: uuid.UUID
+    item_code: str
+    description: str
+    unit: str
+    unit_price: Optional[Decimal] = None
+    issued_quantity: Decimal
+    already_returned_quantity: Decimal
+    remaining_returnable_quantity: Decimal
+
+
+class SIVReturnableItemsResponse(BaseModel):
+    transaction_id: uuid.UUID
+    transaction_number: str
+    warehouse_id: Optional[uuid.UUID] = None
+    project_id: Optional[uuid.UUID] = None
+    siv_no: Optional[str] = None
+    transaction_date: date
+    lines: List[SIVReturnableLine]
 
 
 class AdjustmentLineCreate(BaseModel):

@@ -292,6 +292,27 @@ export interface ReconciliationCommitResponse {
   warehouse_id: string
 }
 
+export interface SIVReturnableLine {
+  item_id: string
+  item_code: string
+  description: string
+  unit: string
+  unit_price?: number | string | null
+  issued_quantity: number | string
+  already_returned_quantity: number | string
+  remaining_returnable_quantity: number | string
+}
+
+export interface SIVReturnableItemsResponse {
+  transaction_id: string
+  transaction_number: string
+  warehouse_id?: string | null
+  project_id?: string | null
+  siv_no?: string | null
+  transaction_date: string
+  lines: SIVReturnableLine[]
+}
+
 export interface InTransitReportItem {
   transfer_record_id: string
   istv_transaction_id?: string

@@ -4,6 +4,7 @@ import type {
   Transaction,
   Project,
   InTransitReportItem,
+  SIVReturnableItemsResponse,
 } from '@/types'
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ export interface SRVLineInput {
   item_id: string
   quantity: number
   unit: string
+  unit_price?: number | null
   remarks?: string
 }
 
@@ -329,5 +331,19 @@ export function useCreateAdjustment() {
       queryClient.invalidateQueries({ queryKey: ['items'] })
       queryClient.invalidateQueries({ queryKey: ['reports'] })
     },
+  })
+}
+
+
+export function useSIVReturnableItems(sivId?: string) {
+  return useQuery({
+    queryKey: ['siv-returnable-items', sivId],
+    queryFn: async (): Promise<SIVReturnableItemsResponse> => {
+      const response = await api.get<SIVReturnableItemsResponse>(
+        `/transactions/siv/${sivId}/returnable-items`
+      )
+      return response.data
+    },
+    enabled: Boolean(sivId && sivId.trim().length > 0),
   })
 }

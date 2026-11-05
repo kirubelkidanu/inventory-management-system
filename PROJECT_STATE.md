@@ -1015,3 +1015,44 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
 - **Ledger Invariants**: Stock transactions, dual writes, in-transit decrement/increment, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+
+---
+
+## 2026-11-05 – SRV Valuation Inheritance, Over-Return Prevention & Auto-Population
+
+### 1. Architectural Scope & Implementation
+- **Backend Schema & API Routes (`backend/app/schemas/transaction.py`, `backend/app/api/routes/transactions.py`)**:
+  * Extended `SRVLineCreate` with `unit_price: Optional[Decimal] = Field(None, ge=0)`.
+  * Added `reference_transaction_id` alias support on `SRVCreate` with `model_validator` ensuring backward compatibility.
+  * Added `SIVReturnableLine` and `SIVReturnableItemsResponse` schemas.
+  * Added endpoint `GET /api/v1/transactions/siv/{siv_id}/returnable-items` positioned above generic UUID route to expose SIV metadata, issued quantities, previously returned quantities, and remaining returnable limits.
+- **Backend Service & Repository Layer (`backend/app/services/transaction.py`, `backend/app/repositories/transaction.py`)**:
+  * Added `TransactionRepository.get_returned_quantities_for_siv(siv_id)` querying cumulative posted returns against any SIV.
+  * Updated `create_and_post_srv`:
+    * Validated referenced SIV existence, transaction type (`SIV`), and status (`POSTED`).
+    * Enforced over-return prevention: `max_returnable = issued_qty - previously_returned_qty`. Rejects return attempts exceeding `max_returnable` with `HTTP_400_BAD_REQUEST`.
+    * Valuation inheritance: inherited `unit_price = siv_line.unit_price` (or user override if supplied), falling back to latest inbound acquisition cost.
+    * Atomic balance row locking (`SELECT FOR UPDATE`), incremented destination stock on hand (`inventory_balances.quantity_on_hand += quantity`), and created append-only `IN` stock movement with `running_balance`.
+    * Recorded audit log (`action="POST"`).
+  * Implemented `TransactionService.get_siv_returnable_items(siv_id)` calculating exact remaining balances per item.
+- **Frontend SRV Interface (`frontend/src/features/transactions/SRVPage.tsx`, `useTransactionData.ts`, `types/index.ts`, `TransactionDetailPage.tsx`)**:
+  * Added `useSIVReturnableItems(sivId)` React Query hook.
+  * Enhanced `SRVPage.tsx`:
+    * Selecting an SIV voucher auto-populates receiving warehouse, credited project, and eligible returnable line items.
+    * Table columns: SKU Code Badge + Item Description, Issued Qty Badge (`Issued: {issued} | Avail: {avail}`), Return Qty numeric input with real-time over-return red warning, Unit Badge, Unit Price (ETB) input, and read-only calculated Total Returned Value (ETB).
+    * Summary footer card: Total Return Lines, Total Returned Quantity, Total Returned Valuation (ETB).
+    * Post button strictly disabled if any line exceeds remaining returnable quantity, if return quantity is zero, or if no SIV is selected.
+  * Updated `TransactionDetailPage.tsx`: added `'SRV'` to `isGRV` condition so Unit Price, Total Price, and Total Valuation banner render on return vouchers.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 278 passed in 4.67s across all 16 test modules (100% passing).
+  * Added unit test for full SRV creation inheriting `unit_price` from originating SIV line.
+  * Added unit test for partial SRV return updating `quantity_on_hand` (+IN) and writing correct `stock_movements`.
+  * Added unit test for over-return rejection with HTTP 400.
+  * Added unit test for cumulative multiple partial returns capping at issued quantity.
+  * Added unit test for `get_siv_returnable_items` service logic and API endpoint.
+  * Added unit test for Trial Balance rendering SRV movements with `in_quantity`, `unit_price`, and calculated `total_price`.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
+- **Ledger Invariants**: Stock dual writes, returns, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

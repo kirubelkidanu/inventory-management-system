@@ -15,6 +15,7 @@ from app.schemas.transaction import (
     ISTVCreate,
     SIVCreate,
     SRVCreate,
+    SIVReturnableItemsResponse,
     TransactionRead,
     TransferRecordRead,
 )
@@ -167,6 +168,19 @@ async def get_transfer_record(
             detail=f"Transfer record for ISTV {istv_id} not found.",
         )
     return transfer
+
+
+@router.get(
+    "/siv/{siv_id}/returnable-items",
+    response_model=SIVReturnableItemsResponse,
+    summary="Get returnable line items and metadata for an SIV voucher",
+)
+async def get_siv_returnable_items(
+    siv_id: uuid.UUID,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    service: TransactionService = Depends(get_transaction_service),
+):
+    return await service.get_siv_returnable_items(siv_id)
 
 
 @router.get(

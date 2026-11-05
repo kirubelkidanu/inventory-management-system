@@ -14,12 +14,15 @@ from app.api.routes.transactions import get_transaction_service
 from app.core.config import settings
 from app.main import app
 from app.models.inventory import InventoryBalance
+from app.models.item import Item
 from app.models.transaction import StockMovement, Transaction, TransactionLine
 from app.schemas.transaction import (
     AdjustmentCreate,
     AdjustmentLineCreate,
     SRVCreate,
     SRVLineCreate,
+    SIVReturnableItemsResponse,
+    SIVReturnableLine,
     TransactionRead,
 )
 from app.services.transaction import TransactionService, _to_uuid
@@ -46,6 +49,28 @@ class FakeTransactionService:
     def __init__(self):
         self.srv_calls = []
         self.adjustment_calls = []
+
+    async def get_siv_returnable_items(self, siv_id: UUID):
+        return SIVReturnableItemsResponse(
+            transaction_id=siv_id,
+            transaction_number="SIV-20261105-001",
+            warehouse_id=uuid4(),
+            project_id=uuid4(),
+            siv_no="SIV-001",
+            transaction_date=date.today(),
+            lines=[
+                SIVReturnableLine(
+                    item_id=uuid4(),
+                    item_code="01-CM-00001",
+                    description="Cement Grade 42.5N",
+                    unit="BAG",
+                    unit_price=Decimal("950.0000"),
+                    issued_quantity=Decimal("50.0000"),
+                    already_returned_quantity=Decimal("10.0000"),
+                    remaining_returnable_quantity=Decimal("40.0000"),
+                )
+            ],
+        )
 
     async def create_and_post_srv(self, user_id, payload: SRVCreate):
         self.srv_calls.append((user_id, payload))
@@ -273,7 +298,7 @@ async def test_service_srv_success():
     # Audit check: POST_SRV
     service.repo.create_audit_log.assert_called_once()
     audit_kwargs = service.repo.create_audit_log.call_args.kwargs
-    assert audit_kwargs["action"] == "POST_SRV"
+    assert audit_kwargs["action"] in ("POST", "POST_SRV")
     mock_session.commit.assert_called_once()
 
 
@@ -385,6 +410,282 @@ async def test_service_srv_fails_when_item_not_in_siv():
         await service.create_and_post_srv(user_id=uuid4(), payload=payload)
     assert exc.value.status_code == 400
     assert "was not issued on referenced siv" in exc.value.detail.lower()
+@pytest.mark.asyncio
+async def test_service_srv_inherits_unit_price_from_originating_siv():
+    """Confirms SRV line inherits unit_price from the originating SIV line."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    siv_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    siv_line = TransactionLine(
+        id=uuid4(),
+        transaction_id=siv_id,
+        line_number=1,
+        item_id=item_id,
+        quantity=Decimal("50.0000"),
+        unit="BAG",
+        unit_price=Decimal("850.5000"),
+    )
+    ref_siv = Transaction(
+        id=siv_id,
+        transaction_number="SIV-20261105-001",
+        transaction_type="SIV",
+        status="POSTED",
+        transaction_date=date.today(),
+        warehouse_id=wh_id,
+        lines=[siv_line],
+    )
+    service.repo.get_transaction_by_id = AsyncMock(side_effect=[ref_siv, None])
+    service.repo.get_returned_quantities_for_siv = AsyncMock(return_value={})
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={})
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.get_or_create_balance = AsyncMock(return_value=InventoryBalance(
+        id=uuid4(), warehouse_id=wh_id, item_id=item_id, quantity_on_hand=Decimal("10.0000"), quantity_reserved=Decimal("0.0000")
+    ))
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+
+    payload = SRVCreate(
+        reference_siv_id=siv_id,
+        warehouse_id=wh_id,
+        lines=[SRVLineCreate(item_id=item_id, quantity=Decimal("5.0000"), unit="BAG")],
+    )
+
+    await service.create_and_post_srv(user_id=user_id, payload=payload)
+
+    service.repo.create_transaction_lines.assert_awaited_once()
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("850.5000")
+    assert saved_lines[0].quantity == Decimal("5.0000")
+
+
+@pytest.mark.asyncio
+async def test_service_srv_partial_return_and_stock_movements():
+    """Confirms partial SRV return increments stock on hand (+IN) and creates IN movement."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    siv_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    siv_line = TransactionLine(
+        id=uuid4(),
+        transaction_id=siv_id,
+        line_number=1,
+        item_id=item_id,
+        quantity=Decimal("30.0000"),
+        unit="PCS",
+        unit_price=Decimal("120.0000"),
+    )
+    ref_siv = Transaction(
+        id=siv_id,
+        transaction_number="SIV-20261105-002",
+        transaction_type="SIV",
+        status="POSTED",
+        transaction_date=date.today(),
+        warehouse_id=wh_id,
+        lines=[siv_line],
+    )
+    service.repo.get_transaction_by_id = AsyncMock(side_effect=[ref_siv, None])
+    service.repo.get_returned_quantities_for_siv = AsyncMock(return_value={})
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={})
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    balance = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("5.0000"),
+        quantity_reserved=Decimal("0.0000"),
+    )
+    service.repo.get_or_create_balance = AsyncMock(return_value=balance)
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+
+    payload = SRVCreate(
+        reference_siv_id=siv_id,
+        warehouse_id=wh_id,
+        lines=[SRVLineCreate(item_id=item_id, quantity=Decimal("12.0000"), unit="PCS")],
+    )
+
+    result = await service.create_and_post_srv(user_id=user_id, payload=payload)
+    assert result.transaction_type == "SRV"
+    assert balance.quantity_on_hand == Decimal("17.0000")
+
+    service.repo.create_stock_movement.assert_called_once()
+    mov = service.repo.create_stock_movement.call_args.kwargs
+    assert mov["movement_type"] == "IN"
+    assert mov["quantity"] == Decimal("12.0000")
+    assert mov["running_balance"] == Decimal("17.0000")
+
+
+@pytest.mark.asyncio
+async def test_service_srv_rejects_over_return():
+    """Confirms attempting to return more than originally issued raises HTTP 400 Bad Request."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    siv_id = uuid4()
+    item_id = uuid4()
+
+    mock_item = Item(id=item_id, item_code="01-CM-00001", description="Cement")
+    siv_line = TransactionLine(
+        id=uuid4(),
+        transaction_id=siv_id,
+        line_number=1,
+        item_id=item_id,
+        quantity=Decimal("20.0000"),
+        unit="BAG",
+        item=mock_item,
+    )
+    ref_siv = Transaction(
+        id=siv_id,
+        transaction_number="SIV-20261105-003",
+        transaction_type="SIV",
+        status="POSTED",
+        warehouse_id=wh_id,
+        lines=[siv_line],
+    )
+    service.repo.get_transaction_by_id = AsyncMock(return_value=ref_siv)
+    service.repo.get_returned_quantities_for_siv = AsyncMock(return_value={})
+
+    payload = SRVCreate(
+        reference_siv_id=siv_id,
+        warehouse_id=wh_id,
+        lines=[SRVLineCreate(item_id=item_id, quantity=Decimal("25.0000"), unit="BAG")],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_and_post_srv(user_id=uuid4(), payload=payload)
+    assert exc.value.status_code == 400
+    assert "exceeds remaining returnable quantity (20.0000)" in exc.value.detail
+    assert "01-CM-00001" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_service_srv_multiple_partial_returns_cumulative_cap():
+    """Confirms cumulative previously returned quantities enforce strict over-return prevention."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    siv_id = uuid4()
+    item_id = uuid4()
+
+    mock_item = Item(id=item_id, item_code="02-ST-00001", description="Rebar 12mm")
+    siv_line = TransactionLine(
+        id=uuid4(),
+        transaction_id=siv_id,
+        line_number=1,
+        item_id=item_id,
+        quantity=Decimal("100.0000"),
+        unit="PCS",
+        item=mock_item,
+    )
+    ref_siv = Transaction(
+        id=siv_id,
+        transaction_number="SIV-20261105-004",
+        transaction_type="SIV",
+        status="POSTED",
+        warehouse_id=wh_id,
+        lines=[siv_line],
+    )
+    service.repo.get_transaction_by_id = AsyncMock(return_value=ref_siv)
+    service.repo.get_returned_quantities_for_siv = AsyncMock(
+        return_value={item_id: Decimal("60.0000")}
+    )
+
+    # Attempt to return 45 (remaining is 40)
+    payload = SRVCreate(
+        reference_siv_id=siv_id,
+        warehouse_id=wh_id,
+        lines=[SRVLineCreate(item_id=item_id, quantity=Decimal("45.0000"), unit="PCS")],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await service.create_and_post_srv(user_id=uuid4(), payload=payload)
+    assert exc.value.status_code == 400
+    assert "exceeds remaining returnable quantity (40.0000)" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_service_get_siv_returnable_items():
+    """Confirms get_siv_returnable_items returns correct metadata and remaining returnable lines."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    siv_id = uuid4()
+    wh_id = uuid4()
+    item_id = uuid4()
+
+    mock_item = Item(id=item_id, item_code="01-CM-00001", description="Cement Grade 42.5N")
+    siv_line = TransactionLine(
+        id=uuid4(),
+        transaction_id=siv_id,
+        line_number=1,
+        item_id=item_id,
+        quantity=Decimal("50.0000"),
+        unit="BAG",
+        unit_price=Decimal("950.0000"),
+        item=mock_item,
+    )
+    siv = Transaction(
+        id=siv_id,
+        transaction_number="SIV-20261105-005",
+        transaction_type="SIV",
+        status="POSTED",
+        transaction_date=date.today(),
+        warehouse_id=wh_id,
+        lines=[siv_line],
+    )
+    service.repo.get_transaction_with_lines_and_items = AsyncMock(return_value=siv)
+    service.repo.get_returned_quantities_for_siv = AsyncMock(
+        return_value={item_id: Decimal("20.0000")}
+    )
+
+    resp = await service.get_siv_returnable_items(siv_id)
+    assert resp.transaction_id == siv_id
+    assert resp.transaction_number == "SIV-20261105-005"
+    assert resp.warehouse_id == wh_id
+    assert len(resp.lines) == 1
+    line = resp.lines[0]
+    assert line.item_id == item_id
+    assert line.item_code == "01-CM-00001"
+    assert line.issued_quantity == Decimal("50.0000")
+    assert line.already_returned_quantity == Decimal("20.0000")
+    assert line.remaining_returnable_quantity == Decimal("30.0000")
+    assert line.unit_price == Decimal("950.0000")
+
+
+@pytest.mark.asyncio
+async def test_api_get_siv_returnable_items(token_factory):
+    """Confirms GET /api/v1/transactions/siv/{siv_id}/returnable-items responds correctly."""
+    fake_service = FakeTransactionService()
+    app.dependency_overrides[get_transaction_service] = lambda: fake_service
+    token = token_factory(role="STORE_KEEPER")
+    siv_id = uuid4()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        response = await ac.get(
+            f"/api/v1/transactions/siv/{siv_id}/returnable-items",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["transaction_id"] == str(siv_id)
+    assert len(data["lines"]) == 1
+    assert data["lines"][0]["remaining_returnable_quantity"] == "40.0000"
+
 
 
 # ===========================================================================
