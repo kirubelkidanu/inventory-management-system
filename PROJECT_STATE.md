@@ -1128,3 +1128,24 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
   * Verified role-guarded endpoints return HTTP 403 when called with non-admin role.
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.84s).
 - **Security Audit**: 0 hardcoded credentials or mock bypasses in production code (AGENTS.md Rules 5 & 6).
+
+---
+
+## 2026-11-05 — Production Supabase URL & Public Anon Key Integration
+
+### 1. Architectural Scope & Implementation
+- **Frontend Environment Variables (`frontend/.env`, `frontend/.env.production`)**:
+  * Configured official Supabase endpoint: `VITE_SUPABASE_URL=https://kllunchfkzwhpiwhklzz.supabase.co`.
+  * Configured official publishable anon key: `VITE_SUPABASE_ANON_KEY=sb_publishable_08sHZvm3HnDFO8hwh5mRog_Rbk_Z33Q`.
+- **Frontend Supabase Client Setup (`frontend/src/lib/supabase.ts`)**:
+  * Replaced legacy placeholders (`https://your-project.supabase.co` and `your-anon-key-here`) with safe fallback to official Supabase endpoint and publishable anon key.
+  * Added fail-fast console warning when `VITE_SUPABASE_URL` is empty or not configured in environment variables.
+- **Production Asset Build & Verification (`frontend/dist/`)**:
+  * Successfully rebuilt Vite production assets (`npm run build`).
+  * Scanned output bundles in `frontend/dist/assets/`: 0 occurrences of placeholder `your-project.supabase.co` found, verified presence of official Supabase endpoint `https://kllunchfkzwhpiwhklzz.supabase.co`.
+
+### 2. Verification & Quality Gates
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.71s).
+- **Backend Tests**: 280 passed in 39.37s across all 16 test modules (100% passing).
+- **Security Check**: Verified 0 exposed service-role or private secrets; only the public publishable anon key is configured in client environments (AGENTS.md Rules 5 & 6).
+
