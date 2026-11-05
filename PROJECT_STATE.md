@@ -1091,3 +1091,40 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,705 modules transformed in 1.69s).
 - **Ledger Invariants**: Stock dual-writes, movements, running balances, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rules 5 & 6).
+
+---
+
+## 2026-11-05 — Strict Supabase JWT Authentication & Route Lockdown
+
+### 1. Architectural Scope & Implementation
+- **Configuration & Settings (`backend/app/core/config.py`)**:
+  * Defined `SUPABASE_JWT_SECRET: Optional[str] = None` in `Settings` loaded directly from environment with zero hardcoded defaults.
+- **User Model Compatibility (`backend/app/models/user.py`)**:
+  * Added `@property def user_id(self) -> str` and `def require_role(self, *allowed_roles: str)` to `User` model, maintaining full compatibility across legacy routes.
+- **Backend Dependencies & JWT Verification (`backend/app/dependencies.py`, `backend/app/security/auth.py`)**:
+  * Completely eliminated mock user fallbacks and hardcoded demo accounts.
+  * Implemented `get_current_user`:
+    * Extracts Bearer token from incoming `Authorization` header. Raises HTTP 401 (`{"detail": "Not authenticated"}`) if missing.
+    * Decodes and validates JWT signature via `python-jose` (HS256) using `SUPABASE_JWT_SECRET` (disabling audience verification).
+    * Extracts `sub` claim representing the user's UUID in Supabase Auth.
+    * Queries `public.users` where `auth_user_id = sub` and `is_active = TRUE`.
+    * Raises HTTP 401 (`{"detail": "User account inactive or not provisioned in application directory"}`) if the user is missing or inactive.
+    * Returns authenticated `User` model.
+  * Implemented `require_role(allowed_roles)` and `require_roles` alias to enforce role authorization with HTTP 403 Forbidden.
+- **Authentication Endpoints (`backend/app/api/routes/auth.py`)**:
+  * Removed `DEMO_ACCOUNTS`, `POST /auth/token`, and `POST /auth/demo-login` bypass routes.
+  * Implemented `GET /api/v1/auth/me` returning `{ "id": user.id, "auth_user_id": user.auth_user_id, "email": user.email, "full_name": user.full_name, "role": user.role }`.
+- **Frontend Authentication Lockdown (`frontend/src/`)**:
+  * `LoginPage.tsx`: Removed hardcoded email ('admin@ims.local') and password defaults; fields initialize empty (`""`). Removed mock bypass and demo role buttons. Submits directly via `supabase.auth.signInWithPassword`. Sets Bearer token in Axios, fetches `/auth/me`, and redirects to `/dashboard`.
+  * `AuthContext.tsx`: Initial user state set to `null`. Listens for Supabase session changes via `supabase.auth.onAuthStateChange`. Resolves active user profile via `/auth/me` and synchronizes headers. `logout()` triggers `supabase.auth.signOut()` and purges local session cache.
+  * `ProtectedRoute.tsx` & Router: Guaranteed unauthenticated visits to `/` or protected routes redirect to `/login` with location state preserved. Added explicit `/dashboard` route.
+  * Created `frontend/src/services/api.ts` and `frontend/src/features/auth/useAuth.ts` re-exports.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 280 passed in 36.13s across all 16 test modules (100% passing).
+  * Verified `GET /api/v1/auth/me` without Authorization header returns HTTP 401.
+  * Verified `GET /api/v1/auth/me` with invalid or expired token returns HTTP 401.
+  * Verified `GET /api/v1/auth/me` with valid JWT returns full user profile and role.
+  * Verified role-guarded endpoints return HTTP 403 when called with non-admin role.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.84s).
+- **Security Audit**: 0 hardcoded credentials or mock bypasses in production code (AGENTS.md Rules 5 & 6).

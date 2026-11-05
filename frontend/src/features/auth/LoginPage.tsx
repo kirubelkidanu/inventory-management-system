@@ -1,13 +1,13 @@
 import React, { useState } from 'react'
-import { useNavigate, Navigate } from 'react-router-dom'
+import { useNavigate, Navigate, useLocation } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import axios from 'axios'
-import { api } from '@/lib/api'
+import { api, setAuthToken } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
-import { Lock, Mail, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react'
-import type { UserRole } from '@/types'
+import { Lock, Mail, ArrowRight, AlertCircle, Loader2 } from 'lucide-react'
+import type { User } from '@/types'
 
 const loginSchema = z.object({
   email: z
@@ -16,55 +16,16 @@ const loginSchema = z.object({
     .email('Please enter a valid email address'),
   password: z
     .string()
-    .min(6, 'Password must be at least 6 characters'),
+    .min(1, 'Password is required'),
 })
 
 type LoginFormValues = z.infer<typeof loginSchema>
 
-interface DemoRoleConfig {
-  role: UserRole
-  name: string
-  email: string
-  label: string
-  badgeStyle: string
-}
-
-const DEMO_ROLES: DemoRoleConfig[] = [
-  {
-    role: 'ADMIN',
-    name: 'Alice Administrator',
-    email: 'admin@ims.local',
-    label: 'Admin',
-    badgeStyle: 'border-purple-800/40 bg-purple-950/40 text-purple-300 hover:bg-purple-900/50',
-  },
-  {
-    role: 'INVENTORY_MANAGER',
-    name: 'Bob Manager',
-    email: 'manager@ims.local',
-    label: 'Inv. Manager',
-    badgeStyle: 'border-sky-800/40 bg-sky-950/40 text-sky-300 hover:bg-sky-900/50',
-  },
-  {
-    role: 'STORE_KEEPER',
-    name: 'Charlie Keeper',
-    email: 'storekeeper@ims.local',
-    label: 'Store Keeper',
-    badgeStyle: 'border-amber-800/40 bg-amber-950/40 text-amber-300 hover:bg-amber-900/50',
-  },
-  {
-    role: 'VIEWER',
-    name: 'Diana Auditor',
-    email: 'viewer@ims.local',
-    label: 'Viewer',
-    badgeStyle: 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700',
-  },
-]
-
 export const LoginPage: React.FC = () => {
   const { login, isAuthenticated } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [serverError, setServerError] = useState<string | null>(null)
-  const [quickLoadingRole, setQuickLoadingRole] = useState<UserRole | null>(null)
 
   const {
     register,
@@ -73,77 +34,51 @@ export const LoginPage: React.FC = () => {
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: 'admin@ims.local',
-      password: 'password123',
+      email: '',
+      password: '',
     },
   })
 
   // If already authenticated, redirect to dashboard immediately
   if (isAuthenticated) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/dashboard" replace />
   }
 
   const onSubmit = async (data: LoginFormValues) => {
     setServerError(null)
     try {
-      const response = await api.post<{
-        access_token: string
-        token_type: string
-        user: {
-          id: string
-          email: string
-          full_name: string
-          role: UserRole
-          is_active: boolean
-        }
-      }>('/auth/token', {
-        email: data.email,
+      const { data: authData, error } = await supabase.auth.signInWithPassword({
+        email: data.email.trim(),
         password: data.password,
       })
 
-      const { access_token, user } = response.data
-      login(access_token, user)
-      navigate('/', { replace: true })
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response?.data?.detail) {
-        setServerError(String(err.response.data.detail))
-      } else {
-        setServerError(
-          err instanceof Error ? err.message : 'Invalid credentials provided'
-        )
+      if (error || !authData.session) {
+        setServerError(error?.message || 'Invalid email or password')
+        return
       }
-    }
-  }
 
-  const handleQuickRoleLogin = async (config: DemoRoleConfig) => {
-    setServerError(null)
-    setQuickLoadingRole(config.role)
-    try {
-      const response = await api.post<{
-        access_token: string
-        token_type: string
-        user: {
-          id: string
-          email: string
-          full_name: string
-          role: UserRole
-          is_active: boolean
-        }
-      }>('/auth/demo-login', {
-        role: config.role,
-      })
+      const accessToken = authData.session.access_token
+      setAuthToken(accessToken)
 
-      const { access_token, user } = response.data
-      login(access_token, user)
-      navigate('/', { replace: true })
-    } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response?.data?.detail) {
-        setServerError(String(err.response.data.detail))
-      } else {
-        setServerError('Quick demo sign-in failed. Please verify the backend server is running.')
+      try {
+        const meRes = await api.get<User>('/auth/me', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        })
+        login(accessToken, meRes.data)
+        const fromPath = (location.state as { from?: { pathname: string } })?.from?.pathname
+        navigate(fromPath || '/dashboard', { replace: true })
+      } catch (profileErr: any) {
+        await supabase.auth.signOut()
+        setAuthToken(null)
+        const detail =
+          profileErr?.response?.data?.detail ||
+          'User account inactive or not provisioned in application directory'
+        setServerError(detail)
       }
-    } finally {
-      setQuickLoadingRole(null)
+    } catch (err: unknown) {
+      setServerError(
+        err instanceof Error ? err.message : 'Authentication failed. Please verify your connection.'
+      )
     }
   }
 
@@ -157,7 +92,7 @@ export const LoginPage: React.FC = () => {
       </div>
 
       {serverError && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-800 bg-red-900/30 p-3 text-xs text-red-300">
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-800 bg-red-900/30 p-3 text-xs text-red-300 animate-in fade-in">
           <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
           <span>{serverError}</span>
         </div>
@@ -174,6 +109,7 @@ export const LoginPage: React.FC = () => {
             </div>
             <input
               type="email"
+              autoComplete="email"
               {...register('email')}
               className={`block w-full rounded-lg border bg-slate-900/80 py-2 pl-9 pr-3 text-sm text-white placeholder-slate-500 focus:outline-hidden ${
                 errors.email
@@ -198,6 +134,7 @@ export const LoginPage: React.FC = () => {
             </div>
             <input
               type="password"
+              autoComplete="current-password"
               {...register('password')}
               className={`block w-full rounded-lg border bg-slate-900/80 py-2 pl-9 pr-3 text-sm text-white placeholder-slate-500 focus:outline-hidden ${
                 errors.password
@@ -217,42 +154,19 @@ export const LoginPage: React.FC = () => {
           disabled={isSubmitting}
           className="flex w-full items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-sky-500 focus:outline-hidden disabled:opacity-50 transition-colors"
         >
-          <span>{isSubmitting ? 'Authenticating...' : 'Sign In'}</span>
-          <ArrowRight className="h-4 w-4" />
+          {isSubmitting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Authenticating...</span>
+            </>
+          ) : (
+            <>
+              <span>Sign In</span>
+              <ArrowRight className="h-4 w-4" />
+            </>
+          )}
         </button>
       </form>
-
-      {/* Instant Demo Role Switcher */}
-      <div className="mt-8 border-t border-slate-700/80 pt-6">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-medium text-slate-400">
-            Instant Demo Sign-In
-          </p>
-          <div className="flex items-center gap-1 text-[10px] text-slate-500">
-            <ShieldCheck className="h-3 w-3 text-emerald-500" />
-            <span>RBAC Testing</span>
-          </div>
-        </div>
-        <p className="mt-1 text-[11px] text-slate-500">
-          Switch roles immediately to test role-based access control and voucher permissions:
-        </p>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {DEMO_ROLES.map((cfg) => (
-            <button
-              key={cfg.role}
-              type="button"
-              disabled={quickLoadingRole !== null || isSubmitting}
-              onClick={() => handleQuickRoleLogin(cfg)}
-              className={`flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${cfg.badgeStyle}`}
-            >
-              {quickLoadingRole === cfg.role && (
-                <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              )}
-              <span>{cfg.label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
     </div>
   )
 }

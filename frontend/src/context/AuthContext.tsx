@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import type { User, UserRole } from '@/types'
+import { supabase } from '@/lib/supabase'
+import { api, setAuthToken } from '@/lib/api'
 
 interface AuthContextType {
   user: User | null
@@ -7,7 +9,7 @@ interface AuthContextType {
   isLoading: boolean
   isAuthenticated: boolean
   login: (token: string, user: User) => void
-  logout: () => void
+  logout: () => Promise<void>
   hasRole: (...roles: UserRole[]) => boolean
 }
 
@@ -19,34 +21,108 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true)
 
   useEffect(() => {
-    try {
-      const storedToken = localStorage.getItem('access_token')
-      const storedUser = localStorage.getItem('auth_user')
-      if (storedToken && storedUser) {
-        setToken(storedToken)
-        setUser(JSON.parse(storedUser))
+    let isMounted = true
+
+    const initializeAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.access_token) {
+          const accessToken = session.access_token
+          setAuthToken(accessToken)
+
+          try {
+            const meRes = await api.get<User>('/auth/me', {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            })
+            if (isMounted) {
+              setToken(accessToken)
+              setUser(meRes.data)
+              localStorage.setItem('auth_user', JSON.stringify(meRes.data))
+            }
+          } catch (profileErr) {
+            console.error('Failed to resolve active profile:', profileErr)
+            if (isMounted) {
+              setAuthToken(null)
+              localStorage.removeItem('auth_user')
+              setToken(null)
+              setUser(null)
+            }
+          }
+        } else {
+          setAuthToken(null)
+          localStorage.removeItem('auth_user')
+          if (isMounted) {
+            setToken(null)
+            setUser(null)
+          }
+        }
+      } catch (err) {
+        console.error('Error during auth initialization:', err)
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
       }
-    } catch (e) {
-      console.error('Failed to load auth credentials from storage', e)
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('auth_user')
-    } finally {
-      setIsLoading(false)
+    }
+
+    initializeAuth()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.access_token) {
+        const accessToken = session.access_token
+        setAuthToken(accessToken)
+        try {
+          const meRes = await api.get<User>('/auth/me', {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          })
+          if (isMounted) {
+            setToken(accessToken)
+            setUser(meRes.data)
+            localStorage.setItem('auth_user', JSON.stringify(meRes.data))
+          }
+        } catch {
+          if (isMounted) {
+            setAuthToken(null)
+            localStorage.removeItem('auth_user')
+            setToken(null)
+            setUser(null)
+          }
+        }
+      } else if (event === 'SIGNED_OUT' || !session) {
+        if (isMounted) {
+          setAuthToken(null)
+          localStorage.removeItem('auth_user')
+          setToken(null)
+          setUser(null)
+        }
+      }
+    })
+
+    return () => {
+      isMounted = false
+      subscription.unsubscribe()
     }
   }, [])
 
   const login = (newToken: string, newUser: User) => {
     setToken(newToken)
     setUser(newUser)
-    localStorage.setItem('access_token', newToken)
+    setAuthToken(newToken)
     localStorage.setItem('auth_user', JSON.stringify(newUser))
   }
 
-  const logout = () => {
-    setToken(null)
-    setUser(null)
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('auth_user')
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut()
+    } catch (e) {
+      console.error('Error during signOut:', e)
+    } finally {
+      setAuthToken(null)
+      localStorage.removeItem('auth_user')
+      setToken(null)
+      setUser(null)
+      window.location.href = '/login'
+    }
   }
 
   const hasRole = (...roles: UserRole[]): boolean => {

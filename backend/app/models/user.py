@@ -1,7 +1,8 @@
 # backend/app/models/user.py
 import uuid
-from sqlalchemy import String, Boolean, ForeignKey
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from fastapi import HTTPException, status
+from sqlalchemy import String, Boolean
+from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin
 
 class User(Base, TimestampMixin):
@@ -13,3 +14,15 @@ class User(Base, TimestampMixin):
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    @property
+    def user_id(self) -> str:
+        return str(self.id)
+
+    def require_role(self, *allowed_roles: str) -> None:
+        """Raise HTTP 403 if the user's role is not in allowed_roles."""
+        if self.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{self.role}' is not authorized for this operation.",
+            )

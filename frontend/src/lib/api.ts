@@ -11,6 +11,24 @@ export const api = axios.create({
   timeout: 120000,
 })
 
+export const setAuthToken = (token: string | null) => {
+  if (token) {
+    api.defaults.headers.common['Authorization'] = `Bearer ${token}`
+    localStorage.setItem('access_token', token)
+  } else {
+    delete api.defaults.headers.common['Authorization']
+    localStorage.removeItem('access_token')
+  }
+}
+
+// Attach token on initialization if present
+if (typeof window !== 'undefined') {
+  const existingToken = localStorage.getItem('access_token')
+  if (existingToken) {
+    api.defaults.headers.common['Authorization'] = `Bearer ${existingToken}`
+  }
+}
+
 // Request Interceptor: Attach JWT Bearer Token and sanitize URLs to avoid double slashes
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
@@ -34,14 +52,14 @@ api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      console.error("API 401 Unauthorized:", error.config?.url)
       const isAuthEndpoint =
-        error.config?.url?.includes('/auth/token') ||
-        error.config?.url?.includes('/auth/demo-login')
+        error.config?.url?.includes('/auth/me') ||
+        error.config?.url?.includes('/auth/token')
       // Clear token on 401 unauthorized only when navigating protected routes
       if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isAuthEndpoint) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('auth_user')
+        delete api.defaults.headers.common['Authorization']
         window.location.href = '/login'
       }
     }

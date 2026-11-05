@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = "https://example.supabase.co"
     SUPABASE_KEY: str = "public-anon-key"
     SUPABASE_SERVICE_ROLE_KEY: str = "service-role-key"
+    SUPABASE_JWT_SECRET: Optional[str] = None
     JWT_SECRET: str = "development-secret-key-change-me"
     JWT_ALGORITHM: str = "HS256"
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,https://inventory.moderngebeya.com,http://inventory.moderngebeya.com"

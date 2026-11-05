@@ -1,145 +1,49 @@
 import uuid
-from typing import Dict
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, ConfigDict
 
-from app.schemas.auth import DemoLoginRequest, LoginRequest, TokenResponse, UserAuthResponse
-from app.security.auth import (
-    ROLES,
-    AuthenticatedUser,
-    create_access_token,
-    get_current_user,
-)
+from app.dependencies import get_current_user
+from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Predefined developer / demo accounts for RBAC testing
-DEMO_ACCOUNTS: Dict[str, dict] = {
-    "admin@ims.local": {
-        "id": uuid.UUID("11111111-1111-1111-1111-111111111111"),
-        "email": "admin@ims.local",
-        "full_name": "Alice Administrator",
-        "role": "ADMIN",
-        "is_active": True,
-    },
-    "manager@ims.local": {
-        "id": uuid.UUID("22222222-2222-2222-2222-222222222222"),
-        "email": "manager@ims.local",
-        "full_name": "Bob Manager",
-        "role": "INVENTORY_MANAGER",
-        "is_active": True,
-    },
-    "storekeeper@ims.local": {
-        "id": uuid.UUID("33333333-3333-3333-3333-333333333333"),
-        "email": "storekeeper@ims.local",
-        "full_name": "Charlie Keeper",
-        "role": "STORE_KEEPER",
-        "is_active": True,
-    },
-    "viewer@ims.local": {
-        "id": uuid.UUID("44444444-4444-4444-4444-444444444444"),
-        "email": "viewer@ims.local",
-        "full_name": "Diana Auditor",
-        "role": "VIEWER",
-        "is_active": True,
-    },
-}
 
-ROLE_TO_ACCOUNT = {acc["role"]: acc for acc in DEMO_ACCOUNTS.values()}
+class UserProfileResponse(BaseModel):
+    id: uuid.UUID
+    auth_user_id: uuid.UUID
+    email: str
+    full_name: str
+    role: str
+    is_active: bool = True
+
+    model_config = ConfigDict(from_attributes=True)
 
 
-@router.post("/token", response_model=TokenResponse, summary="Obtain access token via email & password")
-async def login_for_token(payload: LoginRequest):
+@router.get("/me", response_model=UserProfileResponse, summary="Get current authenticated user profile")
+async def get_me(current_user: User = Depends(get_current_user)):
     """
-    Authenticates user credentials and issues a signed JWT access token.
-    Supports standard demo credentials.
+    Returns the verified user profile from public.users for the authenticated Supabase user.
     """
-    email_key = payload.email.lower().strip()
-    account = DEMO_ACCOUNTS.get(email_key)
+    uid = current_user.id
+    if isinstance(uid, str):
+        try:
+            uid = uuid.UUID(uid)
+        except Exception:
+            uid = uuid.uuid5(uuid.NAMESPACE_DNS, uid)
 
-    if not account:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials. Please use one of the standard demo accounts.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    auth_uid = current_user.auth_user_id
+    if isinstance(auth_uid, str):
+        try:
+            auth_uid = uuid.UUID(auth_uid)
+        except Exception:
+            auth_uid = uuid.uuid5(uuid.NAMESPACE_DNS, auth_uid)
 
-    token = create_access_token(
-        user_id=str(account["id"]),
-        email=account["email"],
-        role=account["role"],
-    )
-
-    user_data = UserAuthResponse(
-        id=account["id"],
-        email=account["email"],
-        full_name=account["full_name"],
-        role=account["role"],
-        is_active=account["is_active"],
-    )
-
-    return TokenResponse(
-        access_token=token,
-        token_type="bearer",
-        user=user_data,
-    )
-
-
-@router.post("/demo-login", response_model=TokenResponse, summary="Instant demo sign-in for testing RBAC")
-async def demo_login(payload: DemoLoginRequest):
-    """
-    Issues a valid signed JWT access token for a requested system role.
-    Used by frontend demo buttons for instantaneous role switching.
-    """
-    normalized_role = payload.role.upper().strip()
-    if normalized_role not in ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid role '{payload.role}'. Must be one of {sorted(ROLES)}.",
-        )
-
-    account = ROLE_TO_ACCOUNT.get(normalized_role)
-    if not account:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No demo account configured for role '{normalized_role}'.",
-        )
-
-    token = create_access_token(
-        user_id=str(account["id"]),
-        email=account["email"],
-        role=account["role"],
-    )
-
-    user_data = UserAuthResponse(
-        id=account["id"],
-        email=account["email"],
-        full_name=account["full_name"],
-        role=account["role"],
-        is_active=account["is_active"],
-    )
-
-    return TokenResponse(
-        access_token=token,
-        token_type="bearer",
-        user=user_data,
-    )
-
-
-@router.get("/me", response_model=UserAuthResponse, summary="Get current authenticated user profile")
-async def get_me(current_user: AuthenticatedUser = Depends(get_current_user)):
-    """Returns the verified user profile from the validated Bearer token."""
-    account = ROLE_TO_ACCOUNT.get(current_user.role)
-    full_name = account["full_name"] if account else "System User"
-
-    try:
-        user_uuid = uuid.UUID(current_user.user_id)
-    except ValueError:
-        user_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, current_user.user_id)
-
-    return UserAuthResponse(
-        id=user_uuid,
+    return UserProfileResponse(
+        id=uid,
+        auth_user_id=auth_uid,
         email=current_user.email,
-        full_name=full_name,
+        full_name=current_user.full_name,
         role=current_user.role,
-        is_active=True,
+        is_active=current_user.is_active,
     )
