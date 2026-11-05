@@ -98,6 +98,7 @@ export interface AdjustmentLineInput {
   direction: 'IN' | 'OUT'
   quantity: number
   unit: string
+  unit_price?: number | null
   remarks?: string
 }
 

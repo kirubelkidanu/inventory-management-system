@@ -1056,3 +1056,38 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
 - **Ledger Invariants**: Stock dual writes, returns, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-05 — Stock Adjustment Valuation, Automatic Cost Lookup & Trial Balance Integration
+
+### 1. Architectural Scope & Implementation
+- **Backend Schema & Service Layer (`backend/app/schemas/transaction.py`, `backend/app/services/transaction.py`)**:
+  * Extended `AdjustmentLineCreate` with `unit_price: Optional[Decimal] = Field(None, ge=0, description="Unit price / cost (>= 0)")`.
+  * Enhanced `create_and_post_adjustment`:
+    * Automatic cost resolution: if `unit_price` is omitted or 0, auto-resolves `unit_price` from `self.repo.get_latest_inbound_unit_price(line.item_id, payload.warehouse_id)`.
+    * Persists `unit_price` directly onto `TransactionLine.unit_price` for downstream financial reporting.
+    * Available stock check for downward adjustments (`direction == 'OUT'`): verifies `available >= line.quantity` and formats clear error detail `Insufficient stock for item {item.item_code} in warehouse. Available: {available}, Requested deduction: {quantity}.`.
+    * Maintains dual-write balance increments/decrements and append-only `stock_movements` with running balance.
+    * Compliant audit log entry (`action="POST"`, `entity_type="TRANSACTION"`) capturing `adjustment_reason`.
+- **Trial Balance Auto-Projection (`backend/app/services/report.py`)**:
+  * Verified `ReportService._map_trial_balance_item` inherits `unit_price` and calculates `total_price = quantity * unit_price` automatically for `ADJUSTMENT` movement types.
+- **Frontend Adjustment Interface (`frontend/src/features/transactions/AdjustmentPage.tsx`, `StockAdjustmentPage.tsx`, `useTransactionData.ts`, `TransactionDetailPage.tsx`)**:
+  * Added `unit_price?: number | null` to `AdjustmentLineInput` interface in `useTransactionData.ts`.
+  * Enhanced `AdjustmentPage.tsx`:
+    * Added `Unit Price (ETB)` input column and read-only calculated `Total Price (ETB)` column (`quantity * (unit_price || 0)`).
+    * Auto-queries `/items/{id}/latest-cost?warehouse_id=${warehouseId}` upon SKU selection and pre-populates unit cost while allowing manual overrides.
+    * Added summary footer card: `Total Adjustment Lines`, `Net Adjusted Quantity` (+IN minus -OUT with color indicator), and `Total Gross Adjusted Valuation (ETB)`.
+    * Transmits numeric `unit_price` in submission payload.
+  * Created `frontend/src/features/transactions/StockAdjustmentPage.tsx` re-exporting `AdjustmentPage`.
+  * Updated `TransactionDetailPage.tsx`: added `'ADJUSTMENT'` to `isGRV` condition to guarantee Unit Price, Total Price, and Total Voucher Valuation banner render for all stock adjustment vouchers.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 282 passed in 3.78s across all 16 test modules (100% passing).
+  * Added `test_service_adjustment_in_persists_unit_price_and_increments_balance`: verifies +IN saves `unit_price`, increments `quantity_on_hand`, and logs audit entry.
+  * Added `test_service_adjustment_out_persists_unit_price_and_decrements_balance`: verifies -OUT saves `unit_price`, decrements `quantity_on_hand`, and logs audit entry.
+  * Added `test_service_adjustment_omitted_unit_price_resolves_latest_inbound_cost`: verifies omitting `unit_price` looks up `get_latest_inbound_unit_price`.
+  * Added `test_service_trial_balance_renders_adjustment_quantity_unit_price_and_total_value`: verifies adjustment movements render `unit_price` and calculated `total_price` in Trial Balance ledger.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,705 modules transformed in 1.69s).
+- **Ledger Invariants**: Stock dual-writes, movements, running balances, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rules 5 & 6).

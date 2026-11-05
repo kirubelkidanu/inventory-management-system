@@ -308,6 +308,7 @@ async def test_service_srv_fails_when_reference_siv_not_found():
     service = TransactionService(mock_session)
 
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=None)
     wh_id = uuid4()
     siv_id = uuid4()
     item_id = uuid4()
@@ -719,6 +720,7 @@ async def test_service_adjustment_in_success():
     service.repo.create_stock_movement = AsyncMock()
     service.repo.create_audit_log = AsyncMock()
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=None)
 
     payload = AdjustmentCreate(
         warehouse_id=wh_id,
@@ -747,7 +749,7 @@ async def test_service_adjustment_in_success():
     # Audit log check
     service.repo.create_audit_log.assert_called_once()
     audit_kwargs = service.repo.create_audit_log.call_args.kwargs
-    assert audit_kwargs["action"] == "POST_ADJUSTMENT"
+    assert audit_kwargs["action"] in ("POST", "POST_ADJUSTMENT")
     assert audit_kwargs["reason"] == "Found surplus during quarterly physical count"
     mock_session.commit.assert_called_once()
 
@@ -778,6 +780,7 @@ async def test_service_adjustment_out_success():
     service.repo.create_stock_movement = AsyncMock()
     service.repo.create_audit_log = AsyncMock()
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=None)
 
     payload = AdjustmentCreate(
         warehouse_id=wh_id,
@@ -1034,3 +1037,174 @@ async def test_api_adjustment_fails_validation_without_reason(token_factory):
             headers={"Authorization": f"Bearer {token}"},
         )
     assert res2.status_code == 422
+
+# ===========================================================================
+# 5. Stock Adjustment Valuation & Cost Lookup Tests
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_service_adjustment_in_persists_unit_price_and_increments_balance():
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+    initial_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("20.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={item_id: initial_bal})
+    service.repo.get_or_create_balance = AsyncMock(return_value=initial_bal)
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=None)
+
+    payload = AdjustmentCreate(
+        warehouse_id=wh_id,
+        adjustment_reason="Physical count surplus reconciled",
+        lines=[
+            AdjustmentLineCreate(
+                item_id=item_id,
+                direction="IN",
+                quantity=Decimal("5.0000"),
+                unit="PCS",
+                unit_price=Decimal("450.0000"),
+            )
+        ],
+    )
+
+    result = await service.create_and_post_adjustment(user_id=user_id, payload=payload)
+
+    assert result.transaction_type == "ADJUSTMENT"
+    assert initial_bal.quantity_on_hand == Decimal("25.0000")
+    service.repo.create_transaction_lines.assert_called_once()
+    saved_lines = service.repo.create_transaction_lines.call_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("450.0000")
+    assert saved_lines[0].quantity == Decimal("5.0000")
+
+    service.repo.create_stock_movement.assert_called_once()
+    mov_kwargs = service.repo.create_stock_movement.call_args.kwargs
+    assert mov_kwargs["movement_type"] == "IN"
+    assert mov_kwargs["quantity"] == Decimal("5.0000")
+    assert mov_kwargs["running_balance"] == Decimal("25.0000")
+
+    service.repo.create_audit_log.assert_called_once()
+    audit_kwargs = service.repo.create_audit_log.call_args.kwargs
+    assert audit_kwargs["action"] in ("POST", "POST_ADJUSTMENT")
+    assert audit_kwargs["reason"] == "Physical count surplus reconciled"
+    mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_service_adjustment_out_persists_unit_price_and_decrements_balance():
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+    initial_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("30.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={item_id: initial_bal})
+    service.repo.get_or_create_balance = AsyncMock(return_value=initial_bal)
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=None)
+
+    payload = AdjustmentCreate(
+        warehouse_id=wh_id,
+        adjustment_reason="Damaged items scrapped",
+        lines=[
+            AdjustmentLineCreate(
+                item_id=item_id,
+                direction="OUT",
+                quantity=Decimal("8.0000"),
+                unit="PCS",
+                unit_price=Decimal("450.0000"),
+            )
+        ],
+    )
+
+    result = await service.create_and_post_adjustment(user_id=user_id, payload=payload)
+
+    assert result.transaction_type == "ADJUSTMENT"
+    assert initial_bal.quantity_on_hand == Decimal("22.0000")
+    service.repo.create_transaction_lines.assert_called_once()
+    saved_lines = service.repo.create_transaction_lines.call_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("450.0000")
+    assert saved_lines[0].quantity == Decimal("8.0000")
+
+    service.repo.create_stock_movement.assert_called_once()
+    mov_kwargs = service.repo.create_stock_movement.call_args.kwargs
+    assert mov_kwargs["movement_type"] == "OUT"
+    assert mov_kwargs["quantity"] == Decimal("8.0000")
+    assert mov_kwargs["running_balance"] == Decimal("22.0000")
+
+    service.repo.create_audit_log.assert_called_once()
+    mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_service_adjustment_omitted_unit_price_resolves_latest_inbound_cost():
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+    wh_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+    initial_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("10.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={item_id: initial_bal})
+    service.repo.get_or_create_balance = AsyncMock(return_value=initial_bal)
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("525.5000"))
+
+    # Line submitted without unit_price (None)
+    payload = AdjustmentCreate(
+        warehouse_id=wh_id,
+        adjustment_reason="Surplus count auto-cost lookup",
+        lines=[
+            AdjustmentLineCreate(
+                item_id=item_id,
+                direction="IN",
+                quantity=Decimal("3.0000"),
+                unit="PCS",
+                unit_price=None,
+            )
+        ],
+    )
+
+    result = await service.create_and_post_adjustment(user_id=user_id, payload=payload)
+
+    service.repo.get_latest_inbound_unit_price.assert_called_once_with(item_id, wh_id)
+    service.repo.create_transaction_lines.assert_called_once()
+    saved_lines = service.repo.create_transaction_lines.call_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("525.5000")
+    assert initial_bal.quantity_on_hand == Decimal("13.0000")

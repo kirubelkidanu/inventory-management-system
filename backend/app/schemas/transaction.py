@@ -181,6 +181,7 @@ class AdjustmentLineCreate(BaseModel):
     direction: Literal["IN", "OUT"]
     quantity: Decimal = Field(..., gt=0, description="Quantity must be strictly positive")
     unit: str = Field(..., min_length=1, max_length=50, description="Unit of measurement")
+    unit_price: Optional[Decimal] = Field(None, ge=0, description="Unit price / cost (>= 0)")
     remarks: Optional[str] = None
 
 

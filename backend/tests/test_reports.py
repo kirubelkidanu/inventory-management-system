@@ -605,3 +605,108 @@ async def test_reports_unauthenticated_rejected():
     assert res2.status_code in (401, 403)
     assert res3.status_code in (401, 403)
     assert res4.status_code in (401, 403)
+
+@pytest.mark.asyncio
+async def test_service_trial_balance_renders_adjustment_quantity_unit_price_and_total_value():
+    """Confirms ADJUSTMENT movements render quantity, unit_price, and calculated total_price in Trial Balance."""
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+    wh_id = uuid4()
+    item_id = uuid4()
+
+    fake_adj_in_row = {
+        "movement_id": uuid4(),
+        "movement_date": date.today(),
+        "created_at": datetime.now(timezone.utc),
+        "transaction_id": uuid4(),
+        "transaction_number": "ADJ-20261105-0001",
+        "transaction_type": "ADJUSTMENT",
+        "external_reference": None,
+        "supplier_name": None,
+        "invoice_no": None,
+        "received_grv_no": None,
+        "store_no": None,
+        "requested_from": None,
+        "project_dept": None,
+        "requested_no": None,
+        "siv_no": None,
+        "movement_type": "IN",
+        "quantity": Decimal("10.0000"),
+        "signed_quantity": Decimal("10.0000"),
+        "running_balance": Decimal("110.0000"),
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Cement Grade 42.5N",
+        "category_name": "Cement & Aggregates",
+        "unit": "BAG",
+        "unit_price": Decimal("850.0000"),
+        "warehouse_id": wh_id,
+        "warehouse_code": "KZ-WH-001",
+        "warehouse_name": "Kazanchis Main Warehouse",
+        "project_name": None,
+        "plate_no": None,
+        "driver_name": None,
+        "remarks": "Physical surplus count adjustment",
+        "entered_by_name": "Inventory Manager",
+    }
+
+    fake_adj_out_row = {
+        "movement_id": uuid4(),
+        "movement_date": date.today(),
+        "created_at": datetime.now(timezone.utc),
+        "transaction_id": uuid4(),
+        "transaction_number": "ADJ-20261105-0002",
+        "transaction_type": "ADJUSTMENT",
+        "external_reference": None,
+        "supplier_name": None,
+        "invoice_no": None,
+        "received_grv_no": None,
+        "store_no": None,
+        "requested_from": None,
+        "project_dept": None,
+        "requested_no": None,
+        "siv_no": None,
+        "movement_type": "OUT",
+        "quantity": Decimal("4.0000"),
+        "signed_quantity": Decimal("-4.0000"),
+        "running_balance": Decimal("106.0000"),
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Cement Grade 42.5N",
+        "category_name": "Cement & Aggregates",
+        "unit": "BAG",
+        "unit_price": Decimal("850.0000"),
+        "warehouse_id": wh_id,
+        "warehouse_code": "KZ-WH-001",
+        "warehouse_name": "Kazanchis Main Warehouse",
+        "project_name": None,
+        "plate_no": None,
+        "driver_name": None,
+        "remarks": "Damaged cement write-off",
+        "entered_by_name": "Inventory Manager",
+    }
+
+    service.repo.get_trial_balance = AsyncMock(
+        return_value=([fake_adj_in_row, fake_adj_out_row], 2, Decimal("10.0000"), Decimal("4.0000"))
+    )
+
+    response = await service.get_trial_balance_report(
+        warehouse_id=wh_id, page=1, page_size=50
+    )
+
+    assert response.total_count == 2
+    assert response.total_in == Decimal("10.0000")
+    assert response.total_out == Decimal("4.0000")
+    item_in = response.items[0]
+    assert item_in.transaction_type == "ADJUSTMENT"
+    assert item_in.in_quantity == Decimal("10.0000")
+    assert item_in.out_quantity == Decimal("0.0000")
+    assert item_in.unit_price == Decimal("850.0000")
+    assert item_in.total_price == Decimal("8500.0000")
+
+    item_out = response.items[1]
+    assert item_out.transaction_type == "ADJUSTMENT"
+    assert item_out.in_quantity == Decimal("0.0000")
+    assert item_out.out_quantity == Decimal("4.0000")
+    assert item_out.unit_price == Decimal("850.0000")
+    assert item_out.total_price == Decimal("3400.0000")

@@ -54,6 +54,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
       tx.transaction_type?.toUpperCase() === 'ISTV' ||
       tx.transaction_type?.toUpperCase() === 'ISTRV' ||
       tx.transaction_type?.toUpperCase() === 'SRV' ||
+      tx.transaction_type?.toUpperCase() === 'ADJUSTMENT' ||
       (tx.lines || []).some(
         (l) => l.unit_price !== undefined && l.unit_price !== null && Number(l.unit_price) > 0
       )

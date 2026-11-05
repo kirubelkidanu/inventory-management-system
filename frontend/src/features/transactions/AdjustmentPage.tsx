@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { Sliders, Plus, Trash2, ShieldAlert, Loader2, AlertTriangle, ArrowLeft, Lock } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
@@ -36,9 +36,10 @@ export const AdjustmentPage: React.FC = () => {
     direction: 'IN' | 'OUT'
     quantity: string
     unit: string
+    unit_price: string
     remarks: string
   }>>([
-    { item_id: initialItemId, direction: 'IN', quantity: '1', unit: 'PCS', remarks: '' },
+    { item_id: initialItemId, direction: 'IN', quantity: '1', unit: 'PCS', unit_price: '0.00', remarks: '' },
   ])
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -46,7 +47,7 @@ export const AdjustmentPage: React.FC = () => {
 
   const createAdjustmentMutation = useCreateAdjustment()
 
-  // Update initial line unit if initialItemId is provided
+  // Update initial line unit and cost if initialItemId is provided
   useEffect(() => {
     if (initialItemId) {
       api.get<Item>(`/items/${initialItemId}`).then((res) => {
@@ -55,13 +56,31 @@ export const AdjustmentPage: React.FC = () => {
             const updated = [...prev]
             if (updated[0] && updated[0].item_id === initialItemId) {
               updated[0].unit = res.data.default_unit
+              if (res.data.latest_unit_price !== undefined && res.data.latest_unit_price !== null && Number(res.data.latest_unit_price) >= 0) {
+                updated[0].unit_price = Number(res.data.latest_unit_price).toFixed(2)
+              }
+            }
+            return updated
+          })
+        }
+      }).catch(() => {})
+
+      api.get<{ item_id: string; latest_unit_price: number | null }>(
+        `/items/${initialItemId}/latest-cost`,
+        { params: warehouseId ? { warehouse_id: warehouseId } : {} }
+      ).then((costRes) => {
+        if (costRes.data?.latest_unit_price !== undefined && costRes.data?.latest_unit_price !== null) {
+          setLines((prev) => {
+            const updated = [...prev]
+            if (updated[0] && updated[0].item_id === initialItemId) {
+              updated[0].unit_price = Number(costRes.data.latest_unit_price).toFixed(2)
             }
             return updated
           })
         }
       }).catch(() => {})
     }
-  }, [initialItemId])
+  }, [initialItemId, warehouseId])
 
   // Update warehouse if query parameter arrives after mount
   useEffect(() => {
@@ -70,19 +89,47 @@ export const AdjustmentPage: React.FC = () => {
     }
   }, [initialWarehouseId, warehouseId])
 
-  const handleItemChange = (idx: number, newItemId: string, item?: Item) => {
+  const handleItemChange = async (idx: number, newItemId: string, item?: Item) => {
     const updated = [...lines]
     updated[idx].item_id = newItemId
     if (item?.default_unit) {
       updated[idx].unit = item.default_unit
     }
+
+    // Auto-populate unit price if available on item object
+    if (item?.latest_unit_price !== undefined && item?.latest_unit_price !== null && Number(item.latest_unit_price) >= 0) {
+      updated[idx].unit_price = Number(item.latest_unit_price).toFixed(2)
+    } else {
+      updated[idx].unit_price = '0.00'
+    }
     setLines(updated)
+
+    // Also query latest-cost endpoint for warehouse-specific cost if available
+    if (newItemId) {
+      try {
+        const costRes = await api.get<{ item_id: string; latest_unit_price: number | null }>(
+          `/items/${newItemId}/latest-cost`,
+          { params: warehouseId ? { warehouse_id: warehouseId } : {} }
+        )
+        if (costRes.data?.latest_unit_price !== undefined && costRes.data?.latest_unit_price !== null) {
+          setLines((prev) => {
+            const current = [...prev]
+            if (current[idx] && current[idx].item_id === newItemId) {
+              current[idx].unit_price = Number(costRes.data.latest_unit_price).toFixed(2)
+            }
+            return current
+          })
+        }
+      } catch {
+        // Keep initial price if lookup fails
+      }
+    }
   }
 
   const addLine = () => {
     setLines([
       ...lines,
-      { item_id: '', direction: 'IN', quantity: '1', unit: 'PCS', remarks: '' },
+      { item_id: '', direction: 'IN', quantity: '1', unit: 'PCS', unit_price: '0.00', remarks: '' },
     ])
   }
 
@@ -91,6 +138,24 @@ export const AdjustmentPage: React.FC = () => {
       setLines(lines.filter((_, i) => i !== idx))
     }
   }
+
+  // Live Totals
+  const totalLines = lines.length
+
+  const netAdjustedQuantity = useMemo(() => {
+    return lines.reduce((sum, line) => {
+      const qty = parseFloat(line.quantity) || 0
+      return sum + (line.direction === 'OUT' ? -qty : qty)
+    }, 0)
+  }, [lines])
+
+  const totalGrossValuation = useMemo(() => {
+    return lines.reduce((sum, line) => {
+      const qty = parseFloat(line.quantity) || 0
+      const price = parseFloat(line.unit_price) || 0
+      return sum + qty * price
+    }, 0)
+  }, [lines])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -142,13 +207,17 @@ export const AdjustmentPage: React.FC = () => {
         transaction_date: transactionDate,
         adjustment_reason: adjustmentReason.trim(),
         remarks: remarks.trim() || null,
-        lines: lines.map((l) => ({
-          item_id: l.item_id,
-          direction: l.direction,
-          quantity: parseFloat(l.quantity),
-          unit: l.unit.trim(),
-          remarks: l.remarks.trim() || undefined,
-        })),
+        lines: lines.map((l) => {
+          const priceVal = parseFloat(l.unit_price)
+          return {
+            item_id: l.item_id,
+            direction: l.direction,
+            quantity: parseFloat(l.quantity),
+            unit: l.unit.trim(),
+            unit_price: !isNaN(priceVal) && priceVal >= 0 ? priceVal : null,
+            remarks: l.remarks.trim() || undefined,
+          }
+        }),
       }
 
       const res = await createAdjustmentMutation.mutateAsync(payload)
@@ -163,7 +232,7 @@ export const AdjustmentPage: React.FC = () => {
     setAdjustmentReason('')
     setRemarks('')
     setLines([
-      { item_id: '', direction: 'IN', quantity: '1', unit: 'PCS', remarks: '' },
+      { item_id: '', direction: 'IN', quantity: '1', unit: 'PCS', unit_price: '0.00', remarks: '' },
     ])
     setErrorMessage(null)
   }
@@ -318,95 +387,151 @@ export const AdjustmentPage: React.FC = () => {
           </div>
 
           <div className="mt-3 space-y-3">
-            {lines.map((line, idx) => (
-              <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
-                <div className="w-32">
-                  <label className="block text-[11px] font-medium text-slate-500">Direction *</label>
-                  <select
-                    value={line.direction}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].direction = e.target.value as 'IN' | 'OUT'
-                      setLines(updated)
-                    }}
-                    required
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs font-semibold bg-white focus:border-amber-500 focus:outline-hidden"
-                  >
-                    <option value="IN">+ IN (Surplus / Found)</option>
-                    <option value="OUT">- OUT (Deficit / Scrap)</option>
-                  </select>
-                </div>
+            {lines.map((line, idx) => {
+              const qty = parseFloat(line.quantity) || 0
+              const price = parseFloat(line.unit_price) || 0
+              const lineTotal = qty * price
 
-                <div className="flex-1 min-w-[240px]">
-                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Item SKU & Description *</label>
-                  <ItemCombobox
-                    value={line.item_id}
-                    onChange={(newItemId, selectedItem) => handleItemChange(idx, newItemId, selectedItem)}
-                    required
-                    placeholder="Search SKU or description..."
-                    excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
-                  />
-                </div>
+              return (
+                <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
+                  <div className="w-28 shrink-0">
+                    <label className="block text-[11px] font-medium text-slate-500">Direction *</label>
+                    <select
+                      value={line.direction}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].direction = e.target.value as 'IN' | 'OUT'
+                        setLines(updated)
+                      }}
+                      required
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-2 text-xs font-semibold bg-white focus:border-amber-500 focus:outline-hidden"
+                    >
+                      <option value="IN">+ IN</option>
+                      <option value="OUT">- OUT</option>
+                    </select>
+                  </div>
 
-                <div className="w-28">
-                  <label className="block text-[11px] font-medium text-slate-500">Quantity *</label>
-                  <input
-                    type="number"
-                    min="0.0001"
-                    step="any"
-                    value={line.quantity}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].quantity = e.target.value
-                      setLines(updated)
-                    }}
-                    required
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-amber-500 focus:outline-hidden"
-                  />
-                </div>
+                  <div className="flex-1 min-w-[200px]">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Item SKU & Description *</label>
+                    <ItemCombobox
+                      value={line.item_id}
+                      onChange={(newItemId, selectedItem) => handleItemChange(idx, newItemId, selectedItem)}
+                      required
+                      placeholder="Search SKU or description..."
+                      excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
+                    />
+                  </div>
 
-                <div className="w-24">
-                  <label className="block text-[11px] font-medium text-slate-500">Unit *</label>
-                  <input
-                    type="text"
-                    value={line.unit}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].unit = e.target.value
-                      setLines(updated)
-                    }}
-                    required
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-amber-500 focus:outline-hidden"
-                  />
-                </div>
+                  <div className="w-24 shrink-0">
+                    <label className="block text-[11px] font-medium text-slate-500">Quantity *</label>
+                    <input
+                      type="number"
+                      min="0.0001"
+                      step="any"
+                      value={line.quantity}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].quantity = e.target.value
+                        setLines(updated)
+                      }}
+                      required
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-amber-500 focus:outline-hidden"
+                    />
+                  </div>
 
-                <div className="flex-1 min-w-[150px]">
-                  <label className="block text-[11px] font-medium text-slate-500">Line Remarks</label>
-                  <input
-                    type="text"
-                    value={line.remarks}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].remarks = e.target.value
-                      setLines(updated)
-                    }}
-                    placeholder="Specific item condition note"
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-amber-500 focus:outline-hidden"
-                  />
-                </div>
+                  <div className="w-20 shrink-0">
+                    <label className="block text-[11px] font-medium text-slate-500">Unit *</label>
+                    <input
+                      type="text"
+                      value={line.unit}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].unit = e.target.value
+                        setLines(updated)
+                      }}
+                      required
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-amber-500 focus:outline-hidden"
+                    />
+                  </div>
 
-                <div className="pt-4">
-                  <button
-                    type="button"
-                    onClick={() => removeLine(idx)}
-                    disabled={lines.length === 1}
-                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-200 hover:text-red-600 disabled:opacity-30 transition-colors"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="w-28 shrink-0">
+                    <label className="block text-[11px] font-medium text-slate-500">Unit Price (ETB)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.unit_price}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].unit_price = e.target.value
+                        setLines(updated)
+                      }}
+                      placeholder="0.00"
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-amber-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <div className="w-32 shrink-0">
+                    <label className="block text-[11px] font-medium text-slate-500">Total Price (ETB)</label>
+                    <div className="mt-1 flex items-center h-[34px] rounded-lg border border-slate-200 bg-slate-100/70 py-2 px-3 text-xs font-mono font-semibold text-slate-800">
+                      {lineTotal.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-w-[130px]">
+                    <label className="block text-[11px] font-medium text-slate-500">Line Remarks</label>
+                    <input
+                      type="text"
+                      value={line.remarks}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].remarks = e.target.value
+                        setLines(updated)
+                      }}
+                      placeholder="Condition note"
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-amber-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <div className="pt-4 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => removeLine(idx)}
+                      disabled={lines.length === 1}
+                      className="rounded-lg p-2 text-slate-400 hover:bg-slate-200 hover:text-red-600 disabled:opacity-30 transition-colors"
+                      title="Remove line"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
+              )
+            })}
+          </div>
+
+          {/* Adjustment Summary Footer */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-100 bg-amber-50/60 p-4">
+            <div className="flex items-center gap-6">
+              <div>
+                <span className="text-xs font-medium text-slate-500">Total Adjustment Lines</span>
+                <p className="font-mono text-sm font-bold text-slate-800">{totalLines}</p>
               </div>
-            ))}
+              <div className="border-l border-amber-200 pl-6">
+                <span className="text-xs font-medium text-slate-500">Net Adjusted Quantity</span>
+                <p className={`font-mono text-sm font-bold ${netAdjustedQuantity > 0 ? 'text-emerald-700' : netAdjustedQuantity < 0 ? 'text-amber-700' : 'text-slate-800'}`}>
+                  {netAdjustedQuantity > 0 ? `+${netAdjustedQuantity.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 })}` : netAdjustedQuantity.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 })}
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="text-xs font-medium text-slate-500">Total Gross Adjusted Valuation (ETB)</span>
+              <p className="font-mono text-lg font-extrabold text-amber-700">
+                ETB {totalGrossValuation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
           </div>
         </div>
 

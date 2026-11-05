@@ -1178,11 +1178,18 @@ class TransactionService:
                         else Decimal("0.0000")
                     )
                     if available < line_input.quantity:
+                        item_code = str(line_input.item_id)
+                        try:
+                            item_obj = await self.session.get(Item, line_input.item_id)
+                            if item_obj and item_obj.item_code:
+                                item_code = item_obj.item_code
+                        except Exception:
+                            pass
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=(
-                                f"Insufficient stock for downward adjustment of item {line_input.item_id}. "
-                                f"Available: {available}, Requested reduction: {line_input.quantity}"
+                                f"Insufficient stock for item {item_code} in warehouse. "
+                                f"Available: {available}, Requested deduction: {line_input.quantity}."
                             ),
                         )
 
@@ -1208,9 +1215,14 @@ class TransactionService:
                 posted_by=parsed_user_id,
                 posted_at=now_utc,
             )
-            # 5. Create Transaction lines
+            # 5. Create Transaction lines with valuation persistence
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
+                unit_price = line_input.unit_price
+                if (unit_price is None or unit_price == 0) and hasattr(self.repo, "get_latest_inbound_unit_price"):
+                    unit_price = await self.repo.get_latest_inbound_unit_price(
+                        line_input.item_id, payload.warehouse_id
+                    )
                 line = TransactionLine(
                     id=uuid.uuid4(),
                     transaction_id=tx_id,
@@ -1218,6 +1230,7 @@ class TransactionService:
                     item_id=line_input.item_id,
                     quantity=line_input.quantity,
                     unit=line_input.unit,
+                    unit_price=unit_price,
                     remarks=line_input.remarks,
                 )
                 lines.append(line)
@@ -1261,7 +1274,7 @@ class TransactionService:
             # 7. Record audit log
             await self.repo.create_audit_log(
                 actor_user_id=parsed_user_id,
-                action="POST_ADJUSTMENT",
+                action="POST",
                 entity_type="TRANSACTION",
                 entity_id=str(tx_id),
                 before_state=before_snapshot,
