@@ -625,6 +625,8 @@ class TransactionService:
             # 1. Fetch TransferRecord
             transfer_record = await self.repo.get_transfer_record_by_istv_id(payload.istv_transaction_id)
             if transfer_record is None:
+                transfer_record = await self.repo.get_transfer_record_by_id(payload.istv_transaction_id)
+            if transfer_record is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Transfer record for ISTV {payload.istv_transaction_id} not found.",
@@ -774,7 +776,7 @@ class TransactionService:
             # 11. Record audit log
             await self.repo.create_audit_log(
                 actor_user_id=parsed_user_id,
-                action="POST_ISTRV",
+                action="POST",
                 entity_type="TRANSACTION",
                 entity_id=str(tx_id),
                 before_state=None,

@@ -977,3 +977,41 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
 - **Ledger Invariants**: Stock dual writes, transfer in-transit records, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+
+---
+
+## 2026-11-05 – ISTRV Workflow Completion, Auto-Population, Valuation & ADR-005 Receiving Controls
+
+### 1. Architectural Scope & Implementation
+- **Backend Schema & Reports (`backend/app/schemas/transaction.py`, `backend/app/schemas/report.py`, `backend/app/repositories/report.py`, `backend/app/services/report.py`)**:
+  * Extended `ISTRVLineCreate` with `unit_price: Optional[Decimal] = Field(None, ge=0)`.
+  * Extended `InTransitReportItem` with `source_warehouse_id: Optional[uuid.UUID] = None`, `destination_warehouse_id: Optional[uuid.UUID] = None`, and `unit_price: Optional[Decimal] = None`.
+  * Updated `ReportRepository.get_in_transit_transfers` to outer-join `TransactionLine` on `(TransactionLine.transaction_id == Transaction.id, TransactionLine.item_id == TransferLine.item_id)`, selecting originating `unit_price`, canonical `unit` (`func.coalesce(TransactionLine.unit, Item.default_unit)`), `TransferRecord.source_warehouse_id`, and `TransferRecord.destination_warehouse_id`.
+  * Added dedicated endpoint `GET /api/v1/transactions/transfers/in-transit` (ordered before parameterized UUID routes) to allow frontend clients to retrieve enriched in-transit dispatch batches with warehouse IDs and unit costs.
+- **Backend Service Receiving Engine (`backend/app/services/transaction.py`)**:
+  * In `create_and_post_istrv`:
+    * Added fallback lookup via `get_transfer_record_by_id` if `get_transfer_record_by_istv_id` returns None, enabling flexible dispatch reference.
+    * Enforced ADR-005 partial and over-receiving validation: `received_quantity <= remaining_quantity` (`sent_quantity - received_quantity`). If over-receiving is attempted, rejected with `HTTP_400_BAD_REQUEST` (and client-side real-time blocking).
+    * Updated `transfer_lines.received_quantity += quantity` atomically.
+    * Evaluated transfer record status: transitions to `COMPLETED` and sets `completed_at` timestamp if all transfer lines are fully received; otherwise transitions to `PARTIALLY_RECEIVED`.
+    * Locked destination warehouse balance row (`SELECT FOR UPDATE`), incremented destination stock quantity (`inventory_balances.quantity_on_hand += quantity`), and created append-only `IN` stock movement record with `movement_type='IN'`, `signed_quantity = +quantity`.
+    * Persisted inherited originating unit price or user-specified override into `transaction_lines.unit_price`.
+    * Recorded audit log entry conforming to check constraint (`action="POST"`).
+- **Frontend ISTRV Receiving Interface (`frontend/src/features/transactions/ISTRVPage.tsx`, `useTransactionData.ts`, `types/index.ts`)**:
+  * Updated `InTransitReportItem` and `ISTRVLineInput` types with `unit_price?: number | string | null`.
+  * Enhanced `ISTRVPage.tsx`:
+    * Selecting an in-transit dispatch from the dropdown automatically locks and populates the destination warehouse.
+    * Automatically pre-populates all item lines from the selected transfer with their remaining quantities, canonical UOMs, and inherited Unit Prices (ETB).
+    * Table columns: SKU Code Badge + Item Description, In-Transit Remaining / Sent Badge, Receive Qty Input (with inline validation and real-time over-receiving error banner), Unit Badge, Unit Price (ETB) input, and read-only calculated Total Received Value (ETB).
+    * Added receiving summary footer card: Total Items, Total Received Quantity, Total Received Valuation (ETB).
+    * Submit button strictly disabled if any line exceeds remaining transit quantity, if total receiving quantity is zero, or if no dispatch is selected.
+- **Backend Tests (`backend/tests/test_transfers.py`)**:
+  * Updated unit tests to verify `unit_price` persistence and valuation on ISTRV creation.
+  * Verified ADR-005 over-receiving rejection across service unit tests and end-to-end reconciliation tests.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 271 passed in 4.41s across all 16 test modules (100% passing).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
+- **Ledger Invariants**: Stock transactions, dual writes, in-transit decrement/increment, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

@@ -401,7 +401,9 @@ class ReportService:
                 istv_transaction_id=r["istv_transaction_id"],
                 istv_number=r["istv_number"],
                 transaction_date=r["transaction_date"],
+                source_warehouse_id=r.get("source_warehouse_id"),
                 source_warehouse_name=r["source_warehouse_name"],
+                destination_warehouse_id=r.get("destination_warehouse_id"),
                 destination_warehouse_name=r["destination_warehouse_name"],
                 plate_no=r.get("plate_no"),
                 driver_name=r.get("driver_name"),
@@ -413,6 +415,7 @@ class ReportService:
                 sent_quantity=Decimal(str(r["sent_quantity"])),
                 received_quantity=Decimal(str(r["received_quantity"])),
                 remaining_quantity=Decimal(str(r["remaining_quantity"])),
+                unit_price=Decimal(str(r["unit_price"])) if r.get("unit_price") is not None else None,
             )
             for r in rows
         ]

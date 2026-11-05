@@ -315,6 +315,7 @@ export interface InTransitReportItem {
   remaining_quantity: number | string
   unit: string
   status: string
+  unit_price?: number | string | null
 }
 
 export interface StockBalanceItem {

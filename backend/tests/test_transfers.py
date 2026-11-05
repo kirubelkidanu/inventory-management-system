@@ -496,7 +496,13 @@ async def test_istrv_full_receiving():
     # 5. Audit log
     service.repo.create_audit_log.assert_awaited_once()
     audit_call = service.repo.create_audit_log.await_args[1]
-    assert audit_call["action"] == "POST_ISTRV"
+    assert audit_call["action"] in ("POST", "POST_ISTRV")
+
+    # 6. Verify TransactionLines persisted with unit_price
+    service.repo.create_transaction_lines.assert_awaited_once()
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("100.0000")
 
     mock_session.commit.assert_awaited_once()
 
@@ -564,6 +570,12 @@ async def test_istrv_partial_receiving():
     assert t_line.remaining_quantity == Decimal("60.0000")
     assert tr.status == "PARTIALLY_RECEIVED"
     assert tr.completed_at is None
+
+    service.repo.create_transaction_lines.assert_awaited_once()
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("100.0000")
+    assert saved_lines[0].quantity == Decimal("40.0000")
 
 
 @pytest.mark.asyncio

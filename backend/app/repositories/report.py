@@ -386,7 +386,9 @@ class ReportRepository:
                 TransferRecord.istv_transaction_id,
                 Transaction.transaction_number.label("istv_number"),
                 Transaction.transaction_date,
+                TransferRecord.source_warehouse_id,
                 source_wh.name.label("source_warehouse_name"),
+                TransferRecord.destination_warehouse_id,
                 dest_wh.name.label("destination_warehouse_name"),
                 TransferRecord.plate_no,
                 TransferRecord.driver_name,
@@ -394,14 +396,22 @@ class ReportRepository:
                 Item.id.label("item_id"),
                 Item.item_code,
                 Item.description.label("item_description"),
-                Item.default_unit.label("unit"),
+                func.coalesce(TransactionLine.unit, Item.default_unit).label("unit"),
                 TransferLine.sent_quantity,
                 TransferLine.received_quantity,
                 remaining_expr,
+                TransactionLine.unit_price.label("unit_price"),
             )
             .select_from(TransferRecord)
             .join(TransferLine, TransferRecord.id == TransferLine.transfer_record_id)
             .join(Transaction, TransferRecord.istv_transaction_id == Transaction.id)
+            .outerjoin(
+                TransactionLine,
+                and_(
+                    TransactionLine.transaction_id == Transaction.id,
+                    TransactionLine.item_id == TransferLine.item_id,
+                ),
+            )
             .join(source_wh, TransferRecord.source_warehouse_id == source_wh.id)
             .join(dest_wh, TransferRecord.destination_warehouse_id == dest_wh.id)
             .join(Item, TransferLine.item_id == Item.id)

@@ -79,7 +79,9 @@ class InTransitReportItem(BaseModel):
     istv_transaction_id: uuid.UUID
     istv_number: str
     transaction_date: date
+    source_warehouse_id: Optional[uuid.UUID] = None
     source_warehouse_name: str
+    destination_warehouse_id: Optional[uuid.UUID] = None
     destination_warehouse_name: str
     plate_no: Optional[str] = None
     driver_name: Optional[str] = None
@@ -91,5 +93,6 @@ class InTransitReportItem(BaseModel):
     sent_quantity: Decimal
     received_quantity: Decimal
     remaining_quantity: Decimal
+    unit_price: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)

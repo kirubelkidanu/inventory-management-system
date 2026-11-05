@@ -63,6 +63,7 @@ export interface ISTVCreatePayload {
 export interface ISTRVLineInput {
   item_id: string
   quantity: number
+  unit_price?: number | null
   remarks?: string
 }
 

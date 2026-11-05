@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.schemas.report import InTransitReportItem
 from app.schemas.transaction import (
     OpeningBalanceCreate,
     AdjustmentCreate,
@@ -129,6 +130,24 @@ async def create_adjustment(
 ):
     user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
     return await service.create_and_post_adjustment(user_id=user_id, payload=payload)
+
+
+@router.get(
+    "/transfers/in-transit",
+    response_model=List[InTransitReportItem],
+    summary="Get in-transit transfer lines with remaining quantity tracking",
+)
+async def list_in_transit_transfers(
+    destination_warehouse_id: Optional[uuid.UUID] = Query(None),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.report import ReportService
+    rep_service = ReportService(db)
+    return await rep_service.get_in_transit_report(
+        destination_warehouse_id=destination_warehouse_id,
+        status="IN_TRANSIT",
+    )
 
 
 @router.get(

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { PackageOpen, Plus, Trash2, ShieldAlert, Loader2, AlertTriangle, ArrowLeft, Truck } from 'lucide-react'
+import { PackageOpen, Plus, Trash2, ShieldAlert, Loader2, AlertTriangle, ArrowLeft, Truck, Lock } from 'lucide-react'
 import { useWarehouses } from '@/features/inventory/useInventoryData'
 import { ItemCombobox } from '@/components/ItemCombobox'
+import { cn } from '@/lib/utils'
 import {
   useCreateISTRV,
   useInTransitTransfers,
@@ -10,6 +11,18 @@ import {
 } from './useTransactionData'
 import { VoucherSuccessCard } from './VoucherSuccessCard'
 import type { Transaction, InTransitReportItem } from '@/types'
+
+interface ISTRVLineForm {
+  item_id: string
+  item_code?: string
+  item_description?: string
+  quantity: string
+  sent_quantity: number
+  remaining_quantity: number
+  unit: string
+  unit_price: string
+  remarks: string
+}
 
 export const ISTRVPage: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -24,12 +37,17 @@ export const ISTRVPage: React.FC = () => {
     new Date().toISOString().split('T')[0]
   )
   const [remarks, setRemarks] = useState('')
-  const [lines, setLines] = useState<Array<{
-    item_id: string
-    quantity: string
-    maxRemaining?: number
-    remarks: string
-  }>>([{ item_id: '', quantity: '1', remarks: '' }])
+  const [lines, setLines] = useState<ISTRVLineForm[]>([
+    {
+      item_id: '',
+      quantity: '1',
+      sent_quantity: 1,
+      remaining_quantity: 1,
+      unit: 'PCS',
+      unit_price: '0.00',
+      remarks: '',
+    },
+  ])
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [postedTransaction, setPostedTransaction] = useState<Transaction | null>(null)
@@ -37,12 +55,11 @@ export const ISTRVPage: React.FC = () => {
   const createISTRVMutation = useCreateISTRV()
 
   // Group in-transit transfer lines by ISTV voucher
-  const transferGroups = React.useMemo(() => {
+  const transferGroups = useMemo(() => {
     const map = new Map<string, InTransitReportItem[]>()
     for (const row of inTransitTransfers) {
       if (row.status !== 'COMPLETED' && Number(row.remaining_quantity) > 0) {
-        // Group by transfer_record_id or istv_number
-        const key = row.transfer_record_id
+        const key = row.transfer_record_id || row.istv_transaction_id || row.istv_number
         if (!map.has(key)) {
           map.set(key, [])
         }
@@ -59,17 +76,59 @@ export const ISTRVPage: React.FC = () => {
   // When a transfer is selected from dropdown
   const handleSelectTransferGroup = (recordId: string) => {
     setSelectedTransferId(recordId)
+    setErrorMessage(null)
+
     const match = transferGroups.find((g) => g.recordId === recordId)
     if (match) {
       setDestinationWarehouseId(match.firstRow.destination_warehouse_id || '')
-      // Populate lines with remaining quantities
-      const newLines = match.rows.map((r) => ({
-        item_id: r.item_id,
-        quantity: String(r.remaining_quantity),
-        maxRemaining: Number(r.remaining_quantity),
-        remarks: `Received against ${r.istv_number}`,
-      }))
-      setLines(newLines.length > 0 ? newLines : [{ item_id: '', quantity: '1', remarks: '' }])
+      // Populate lines with remaining quantities and inherited unit price
+      const newLines: ISTRVLineForm[] = match.rows.map((r) => {
+        const remQty = Number(r.remaining_quantity) || 0
+        const sentQty = Number(r.sent_quantity) || remQty
+        const price =
+          r.unit_price !== undefined && r.unit_price !== null
+            ? Number(r.unit_price).toFixed(2)
+            : '0.00'
+        return {
+          item_id: r.item_id,
+          item_code: r.item_code,
+          item_description: r.item_description,
+          quantity: String(remQty),
+          sent_quantity: sentQty,
+          remaining_quantity: remQty,
+          unit: r.unit || 'PCS',
+          unit_price: price,
+          remarks: `Received against ${r.istv_number}`,
+        }
+      })
+      setLines(
+        newLines.length > 0
+          ? newLines
+          : [
+              {
+                item_id: '',
+                quantity: '1',
+                sent_quantity: 1,
+                remaining_quantity: 1,
+                unit: 'PCS',
+                unit_price: '0.00',
+                remarks: '',
+              },
+            ]
+      )
+    } else {
+      setDestinationWarehouseId('')
+      setLines([
+        {
+          item_id: '',
+          quantity: '1',
+          sent_quantity: 1,
+          remaining_quantity: 1,
+          unit: 'PCS',
+          unit_price: '0.00',
+          remarks: '',
+        },
+      ])
     }
   }
 
@@ -81,7 +140,18 @@ export const ISTRVPage: React.FC = () => {
   }, [initialIstvId, transferGroups])
 
   const addLine = () => {
-    setLines([...lines, { item_id: '', quantity: '1', remarks: '' }])
+    setLines([
+      ...lines,
+      {
+        item_id: '',
+        quantity: '1',
+        sent_quantity: 1,
+        remaining_quantity: 1,
+        unit: 'PCS',
+        unit_price: '0.00',
+        remarks: '',
+      },
+    ])
   }
 
   const removeLine = (idx: number) => {
@@ -89,6 +159,31 @@ export const ISTRVPage: React.FC = () => {
       setLines(lines.filter((_, i) => i !== idx))
     }
   }
+
+  const totalQuantity = useMemo(() => {
+    return lines.reduce((sum, line) => {
+      const qty = parseFloat(line.quantity) || 0
+      return sum + qty
+    }, 0)
+  }, [lines])
+
+  const totalValuation = useMemo(() => {
+    return lines.reduce((sum, line) => {
+      const qty = parseFloat(line.quantity) || 0
+      const price = parseFloat(line.unit_price) || 0
+      return sum + qty * price
+    }, 0)
+  }, [lines])
+
+  // Over-receiving condition check
+  const hasOverReceiving = useMemo(() => {
+    return lines.some((l) => {
+      const q = parseFloat(l.quantity) || 0
+      return q > l.remaining_quantity
+    })
+  }, [lines])
+
+  const hasZeroTotal = totalQuantity <= 0
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -105,18 +200,26 @@ export const ISTRVPage: React.FC = () => {
     }
 
     // Validate lines
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
       if (!line.item_id) {
-        setErrorMessage('All lines must have a selected Item SKU.')
+        setErrorMessage(`Line ${i + 1}: Item SKU is required.`)
         return
       }
       const qty = parseFloat(line.quantity)
       if (isNaN(qty) || qty <= 0) {
-        setErrorMessage('All receiving quantities must be greater than zero.')
+        setErrorMessage(`Line ${i + 1}: Quantity must be greater than zero.`)
         return
       }
-      if (line.maxRemaining !== undefined && qty > line.maxRemaining) {
-        setErrorMessage(`Received quantity (${qty}) exceeds remaining in-transit quantity (${line.maxRemaining}). Over-receiving is not allowed (ADR-005).`)
+      if (qty > line.remaining_quantity) {
+        setErrorMessage(
+          `Line ${i + 1}: Received quantity (${qty}) exceeds remaining in-transit quantity (${line.remaining_quantity}). Over-receiving is prohibited (ADR-005).`
+        )
+        return
+      }
+      const price = line.unit_price !== '' ? parseFloat(line.unit_price) : 0
+      if (isNaN(price) || price < 0) {
+        setErrorMessage(`Line ${i + 1}: Unit price must be greater than or equal to 0.`)
         return
       }
     }
@@ -128,16 +231,10 @@ export const ISTRVPage: React.FC = () => {
       return
     }
 
-    // If selectedTransferId is a recordId from report, we need the actual istv_transaction_id
-    // But in our backend, ISTRVCreate expects istv_transaction_id
-    // Let's resolve istv_transaction_id from the transfer report:
-    // If the selected transfer record matched, we can find the ISTV ID, or use selectedTransferId directly
     let targetIstvId = selectedTransferId
     const matchedGroup = transferGroups.find((g) => g.recordId === selectedTransferId)
     if (matchedGroup) {
-      // In report, istv_number is stored. The transfer_record_id might be distinct from istv_transaction_id
-      // Let's check backend report: In backend report: `transfer_record_id = tr.id`, but we also need `istv_transaction_id = tr.istv_transaction_id`
-      targetIstvId = matchedGroup.firstRow.transfer_record_id
+      targetIstvId = matchedGroup.firstRow.istv_transaction_id || matchedGroup.firstRow.transfer_record_id
     }
 
     try {
@@ -149,6 +246,7 @@ export const ISTRVPage: React.FC = () => {
         lines: lines.map((l) => ({
           item_id: l.item_id,
           quantity: parseFloat(l.quantity),
+          unit_price: l.unit_price !== '' && !isNaN(parseFloat(l.unit_price)) ? parseFloat(l.unit_price) : undefined,
           remarks: l.remarks.trim() || undefined,
         })),
       }
@@ -165,7 +263,17 @@ export const ISTRVPage: React.FC = () => {
     setSelectedTransferId('')
     setDestinationWarehouseId('')
     setRemarks('')
-    setLines([{ item_id: '', quantity: '1', remarks: '' }])
+    setLines([
+      {
+        item_id: '',
+        quantity: '1',
+        sent_quantity: 1,
+        remaining_quantity: 1,
+        unit: 'PCS',
+        unit_price: '0.00',
+        remarks: '',
+      },
+    ])
     setErrorMessage(null)
   }
 
@@ -195,7 +303,7 @@ export const ISTRVPage: React.FC = () => {
               Inter-Store Transfer Receiving Voucher (ISTRV)
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              Acknowledge and receive in-transit shipments at destination store. Automatically closes transit state and adds IN stock to destination warehouse.
+              Acknowledge and receive in-transit shipments at destination store. Automatically closes transit state, inherits originating transfer valuation, and credits destination warehouse stock.
             </p>
           </div>
         </div>
@@ -239,7 +347,7 @@ export const ISTRVPage: React.FC = () => {
                 const f = group.firstRow
                 return (
                   <option key={group.recordId} value={group.recordId}>
-                    {f.istv_number} — {f.source_warehouse_code} &rarr; {f.destination_warehouse_code} ({f.plate_no || 'No Plate'} / {f.driver_name || 'Driver'}) — {group.rows.length} item(s)
+                    {f.istv_number} — {f.source_warehouse_name} &rarr; {f.destination_warehouse_name} ({f.plate_no || 'No Plate'} / {f.driver_name || 'Driver'}) — {group.rows.length} item(s)
                   </option>
                 )
               })}
@@ -264,7 +372,7 @@ export const ISTRVPage: React.FC = () => {
               onChange={(e) => setDestinationWarehouseId(e.target.value)}
               required
               disabled={isLoadingWarehouses || Boolean(selectedGroup)}
-              className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-teal-500 focus:outline-hidden disabled:bg-slate-100"
+              className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-teal-500 focus:outline-hidden disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed"
             >
               <option value="">Select Destination Warehouse...</option>
               {warehouses.map((w) => (
@@ -273,6 +381,12 @@ export const ISTRVPage: React.FC = () => {
                 </option>
               ))}
             </select>
+            {selectedGroup && (
+              <p className="mt-1 text-[11px] font-medium text-teal-700 flex items-center gap-1">
+                <Lock className="h-3 w-3 inline text-teal-600" />
+                <span>Locked to destination store from dispatch record</span>
+              </p>
+            )}
           </div>
 
           <div className="sm:col-span-2">
@@ -281,7 +395,7 @@ export const ISTRVPage: React.FC = () => {
               type="text"
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}
-              placeholder="Goods condition, container seal intact, etc."
+              placeholder="Goods condition, container seal intact, bay location, etc."
               className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-teal-500 focus:outline-hidden"
             />
           </div>
@@ -320,7 +434,9 @@ export const ISTRVPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Items to Receive</h3>
-              <p className="text-xs text-slate-500">Partial receiving supported. Over-receiving strictly rejected (ADR-005)</p>
+              <p className="text-xs text-slate-500">
+                Partial receiving is fully supported. Over-receiving exceeding in-transit stock is strictly prohibited (ADR-005).
+              </p>
             </div>
             <button
               type="button"
@@ -333,70 +449,179 @@ export const ISTRVPage: React.FC = () => {
           </div>
 
           <div className="mt-3 space-y-3">
-            {lines.map((line, idx) => (
-              <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
-                <div className="flex-1 min-w-[240px]">
-                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Item SKU & Description *</label>
-                  <ItemCombobox
-                    value={line.item_id}
-                    onChange={(newItemId) => {
-                      const updated = [...lines]
-                      updated[idx].item_id = newItemId
-                      setLines(updated)
-                    }}
-                    required
-                    placeholder="Search SKU or description..."
-                    excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
-                  />
-                </div>
+            {lines.map((line, idx) => {
+              const qtyNum = parseFloat(line.quantity) || 0
+              const priceNum = parseFloat(line.unit_price) || 0
+              const lineTotal = qtyNum * priceNum
+              const isOver = qtyNum > line.remaining_quantity
 
-                <div className="w-36">
-                  <label className="block text-[11px] font-medium text-slate-500">
-                    Receive Qty {line.maxRemaining !== undefined ? `(Max ${line.maxRemaining})` : ''} *
-                  </label>
-                  <input
-                    type="number"
-                    min="0.0001"
-                    max={line.maxRemaining}
-                    step="any"
-                    value={line.quantity}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].quantity = e.target.value
-                      setLines(updated)
-                    }}
-                    required
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-teal-500 focus:outline-hidden"
-                  />
-                </div>
+              return (
+                <div
+                  key={idx}
+                  className={cn(
+                    "flex flex-wrap lg:flex-nowrap items-start gap-3 rounded-xl border p-3.5 transition-colors",
+                    isOver
+                      ? "border-red-300 bg-red-50/50"
+                      : "border-slate-200 bg-slate-50/60"
+                  )}
+                >
+                  <div className="flex-1 min-w-[220px]">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">
+                      Item SKU & Description *
+                    </label>
+                    {line.item_code ? (
+                      <div className="flex flex-col justify-center rounded-lg border border-slate-200 bg-white py-1.5 px-3 min-h-[34px]">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block rounded-md bg-teal-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-teal-800">
+                            {line.item_code}
+                          </span>
+                          <span className="truncate text-xs font-medium text-slate-800">
+                            {line.item_description}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <ItemCombobox
+                        value={line.item_id}
+                        onChange={(newItemId, item) => {
+                          const updated = [...lines]
+                          updated[idx].item_id = newItemId
+                          if (item) {
+                            updated[idx].item_code = item.item_code
+                            updated[idx].item_description = item.description
+                            if (item.default_unit) updated[idx].unit = item.default_unit
+                            if (item.latest_unit_price !== undefined && item.latest_unit_price !== null) {
+                              updated[idx].unit_price = Number(item.latest_unit_price).toFixed(2)
+                            }
+                          }
+                          setLines(updated)
+                        }}
+                        required
+                        placeholder="Search SKU or description..."
+                        excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
+                      />
+                    )}
+                  </div>
 
-                <div className="flex-1 min-w-[150px]">
-                  <label className="block text-[11px] font-medium text-slate-500">Line Remarks</label>
-                  <input
-                    type="text"
-                    value={line.remarks}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].remarks = e.target.value
-                      setLines(updated)
-                    }}
-                    placeholder="Condition / Bay"
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-teal-500 focus:outline-hidden"
-                  />
-                </div>
+                  <div className="w-36">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">In-Transit Qty</label>
+                    <div className="flex items-center h-[34px] rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                      <span>Rem: {line.remaining_quantity} / Sent: {line.sent_quantity}</span>
+                    </div>
+                  </div>
 
-                <div className="pt-4">
-                  <button
-                    type="button"
-                    onClick={() => removeLine(idx)}
-                    disabled={lines.length === 1}
-                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-200 hover:text-red-600 disabled:opacity-30 transition-colors"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="w-28">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Receive Qty *</label>
+                    <input
+                      type="number"
+                      min="0.0001"
+                      max={line.remaining_quantity}
+                      step="0.0001"
+                      value={line.quantity}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].quantity = e.target.value
+                        setLines(updated)
+                      }}
+                      required
+                      className={cn(
+                        "block w-full rounded-lg border py-2 px-3 text-xs bg-white font-mono focus:outline-hidden",
+                        isOver
+                          ? "border-red-500 text-red-700 bg-red-50 focus:border-red-600"
+                          : "border-slate-300 focus:border-teal-500"
+                      )}
+                    />
+                    {isOver && (
+                      <p className="mt-1 text-[10px] font-semibold text-red-600 leading-tight">
+                        Cannot exceed remaining in-transit quantity ({line.remaining_quantity})
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="w-20">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Unit</label>
+                    <div className="flex items-center h-[34px] rounded-lg border border-slate-200 bg-slate-100/70 py-2 px-3 text-xs font-mono font-medium text-slate-700">
+                      {line.unit || 'PCS'}
+                    </div>
+                  </div>
+
+                  <div className="w-28">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Unit Price (ETB)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.unit_price}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].unit_price = e.target.value
+                        setLines(updated)
+                      }}
+                      placeholder="0.00"
+                      className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-teal-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <div className="w-32">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Total Value (ETB)</label>
+                    <div className="flex items-center h-[34px] rounded-lg border border-slate-200 bg-slate-100/70 py-2 px-3 text-xs font-mono font-semibold text-slate-800">
+                      {lineTotal.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-w-[150px]">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Line Remarks</label>
+                    <input
+                      type="text"
+                      value={line.remarks}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].remarks = e.target.value
+                        setLines(updated)
+                      }}
+                      placeholder="Condition / Bay"
+                      className="block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-teal-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <div className="pt-6">
+                    <button
+                      type="button"
+                      onClick={() => removeLine(idx)}
+                      disabled={lines.length === 1}
+                      className="rounded-lg p-2 text-slate-400 hover:bg-slate-200 hover:text-red-600 disabled:opacity-30 transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
+              )
+            })}
+          </div>
+
+          {/* Summary Box */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+            <div className="flex items-center gap-6">
+              <div>
+                <span className="text-xs font-medium text-slate-500">Total Items</span>
+                <p className="font-mono text-sm font-bold text-slate-800">{lines.length}</p>
               </div>
-            ))}
+              <div className="border-l border-slate-200 pl-6">
+                <span className="text-xs font-medium text-slate-500">Total Received Quantity</span>
+                <p className="font-mono text-sm font-bold text-slate-800">
+                  {totalQuantity.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 })}
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="text-xs font-medium text-slate-500">Total Received Valuation (ETB)</span>
+              <p className="font-mono text-lg font-extrabold text-teal-700">
+                ETB {totalValuation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
           </div>
         </div>
 
@@ -404,12 +629,18 @@ export const ISTRVPage: React.FC = () => {
         <div className="flex items-center justify-between border-t border-slate-200 pt-5">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <ShieldAlert className="h-4 w-4 text-teal-600" />
-            <span>Updates transit records and credits destination warehouse stock (ADR-005)</span>
+            <span>Updates transit records and credits destination warehouse stock with inherited valuation (ADR-005)</span>
           </div>
           <button
             type="submit"
-            disabled={createISTRVMutation.isPending}
-            className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-6 py-2.5 text-sm font-semibold text-white shadow-xs hover:bg-teal-500 disabled:opacity-50 transition-colors"
+            disabled={
+              createISTRVMutation.isPending ||
+              hasOverReceiving ||
+              hasZeroTotal ||
+              !selectedTransferId ||
+              !destinationWarehouseId
+            }
+            className="inline-flex items-center gap-2 rounded-xl bg-teal-600 px-6 py-2.5 text-sm font-semibold text-white shadow-xs hover:bg-teal-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {createISTRVMutation.isPending ? (
               <>
