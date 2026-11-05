@@ -215,3 +215,35 @@ async def test_role_guarded_endpoint_returns_403_for_non_admin(token_factory):
 
     assert response.status_code == 403
     assert "not authorized" in response.json()["detail"].lower()
+
+
+# ===========================================================================
+# Supabase ECC (P-256) / ES256 Auth API Verification Tests
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_auth_me_with_supabase_ecc_token_verifies_via_auth_api():
+    """Validates that Supabase ECC (P-256) asymmetric tokens verified via /auth/v1/user return authenticated profile."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer mock-ecc-valid-token"},
+        )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["email"] == "ecc_user@moderngebeya.com"
+    assert data["role"] == "ADMIN"
+    assert data["full_name"] == "ECC Admin"
+
+
+@pytest.mark.asyncio
+async def test_auth_me_with_supabase_ecc_token_not_provisioned_in_db_returns_401():
+    """Validates that a valid Supabase token for an unprovisioned user returns HTTP 401."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer mock-ecc-unprovisioned-token"},
+        )
+
+    assert response.status_code == 401
+    assert "not provisioned" in response.json()["detail"].lower()

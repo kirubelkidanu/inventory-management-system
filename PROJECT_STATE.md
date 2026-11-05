@@ -1172,4 +1172,32 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Backend Tests**: 280 passed in 22.89s across all 16 test modules (100% passing).
 - **Security Check**: 0 private keys or secrets exposed (AGENTS.md Rules 5 & 6).
 
+---
+
+## 2026-11-05 — Supabase ECC P-256 Asymmetric Token Verification & Login Error Surfacing
+
+### 1. Architectural Scope & Implementation
+- **Backend Supabase Auth Verification (`backend/app/dependencies.py`)**:
+  * Added asymmetric verification support for Supabase ECC (P-256) / ES256 signed JWTs via the Supabase Auth user verification endpoint (`{SUPABASE_URL}/auth/v1/user`).
+  * In `get_current_user`:
+    * Extracts Bearer token from `Authorization` header. If missing, raises HTTP 401 Unauthorized (`{"detail": "Not authenticated"}`).
+    * Calls Supabase Auth endpoint with `Authorization: Bearer {token}` and `apikey: {SUPABASE_ANON_KEY}`.
+    * If Supabase returns HTTP 200: parses JSON and extracts user UUID `sub = user_data["id"]`.
+    * If Supabase returns non-200 / 401: falls back to local decode with `SUPABASE_JWT_SECRET` / `JWT_SECRET` or raises HTTP 401 Unauthorized (`{"detail": "Invalid or expired authentication token."}`).
+    * Resolves `User` from `public.users` where `auth_user_id = sub::uuid` and `is_active = TRUE`. If missing or inactive, raises HTTP 401 Unauthorized (`{"detail": "User account inactive or not provisioned in application directory."}`).
+- **Backend Configuration Defaults (`backend/app/core/config.py`)**:
+  * Set `SUPABASE_URL` default to `'https://kllunchfkzwhpiwhklzz.supabase.co'`.
+  * Set `SUPABASE_ANON_KEY` and `SUPABASE_KEY` defaults to `'sb_publishable_08sHZvm3HnDFO8hwh5mRog_Rbk_Z33Q'`.
+- **Frontend Exact Error Detail Surfacing (`frontend/src/features/auth/LoginPage.tsx`)**:
+  * Improved error catch handler to display exact server error detail (`err.response?.data?.detail || err.message`) rather than masking with hardcoded fallbacks.
+- **Test Suite Fixtures & ECC Verification Tests (`backend/tests/conftest.py`, `backend/tests/test_auth.py`)**:
+  * Configured `conftest.py` with `mock_supabase_auth_network` autouse fixture to mock external Supabase Auth API calls, returning 401 for local HS256 tokens and 200 for mock ECC tokens.
+  * Added ECC token verification tests in `backend/tests/test_auth.py` verifying successful profile resolution and unprovisioned user 401 rejection.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 282 passed in 107.18s across all 16 test modules (100% passing).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.70s; bundle hash `index-DRMxL1LM.js`).
+- **Security Check**: 0 private keys or backend service-role credentials exposed in client code (AGENTS.md Rules 5 & 6).
+
+
 

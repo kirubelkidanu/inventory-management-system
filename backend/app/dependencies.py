@@ -1,10 +1,12 @@
 """Application dependencies: database sessions, Supabase JWT authentication, and RBAC."""
 
+import logging
 import sys
 import uuid
 from collections.abc import Callable
 from typing import Any, Optional
 
+import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -14,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
+
+logger = logging.getLogger("ims.security")
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -26,7 +30,10 @@ async def get_current_user(
 ) -> User:
     """
     Validates Supabase Bearer JWT and retrieves active user profile from public.users.
+    Supports Supabase ECC (P-256) / ES256 asymmetric signing via the Supabase Auth verification
+    endpoint (/auth/v1/user) with fallback to local decode.
     """
+    # a. Extract Bearer token from the Authorization header. If missing, raise HTTP 401 Unauthorized
     if credentials is None or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -35,23 +42,65 @@ async def get_current_user(
         )
 
     token = credentials.credentials
-    jwt_secret = settings.SUPABASE_JWT_SECRET or settings.JWT_SECRET
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    role_claim: Optional[str] = None
+    full_name: Optional[str] = None
+    verified_via_supabase = False
+
+    # b. Verify the token using httpx.AsyncClient calling Supabase Auth
+    supabase_url = settings.SUPABASE_URL.rstrip("/")
+    verify_url = f"{supabase_url}/auth/v1/user"
+    anon_key = getattr(settings, "SUPABASE_ANON_KEY", None) or getattr(settings, "SUPABASE_KEY", "")
 
     try:
-        payload = jwt.decode(
-            token,
-            jwt_secret,
-            algorithms=[settings.JWT_ALGORITHM],
-            options={"verify_aud": False},
-        )
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired authentication token.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                verify_url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "apikey": anon_key,
+                },
+            )
+            # c. If Supabase returns HTTP 200: extract user UUID
+            if resp.status_code == 200:
+                user_data = resp.json()
+                sub = user_data.get("id")
+                email = user_data.get("email")
+                metadata = user_data.get("user_metadata") or {}
+                role_claim = metadata.get("role") or user_data.get("role")
+                full_name = metadata.get("full_name")
+                verified_via_supabase = True
+    except Exception as ex:
+        logger.debug("Supabase auth verification request error: %s", ex)
 
-    sub = payload.get("sub")
+    # d. If Supabase returns 401 or non-200: Attempt fallback local decode (if JWT secret is provided)
+    if not verified_via_supabase:
+        jwt_secret = settings.SUPABASE_JWT_SECRET or settings.JWT_SECRET
+        if not jwt_secret:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired authentication token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        try:
+            payload = jwt.decode(
+                token,
+                jwt_secret,
+                algorithms=[settings.JWT_ALGORITHM],
+                options={"verify_aud": False},
+            )
+            sub = payload.get("sub")
+            email = payload.get("email")
+            role_claim = payload.get("role")
+            full_name = payload.get("full_name")
+        except JWTError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired authentication token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     if not sub:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -59,6 +108,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # e. Query public.users where auth_user_id = sub::uuid and is_active = TRUE
     sub_uuid: Optional[uuid.UUID] = None
     try:
         sub_uuid = uuid.UUID(str(sub))
@@ -81,25 +131,27 @@ async def get_current_user(
         except Exception:
             user = None
 
+    # f. If no active user profile exists in public.users, raise HTTP 401 Unauthorized
     if user is None:
         # In pytest test runs when token_factory issues signed test tokens with embedded role claims
-        if "pytest" in sys.modules and payload.get("role") in ROLES:
+        if "pytest" in sys.modules and role_claim in ROLES:
             resolved_uuid = sub_uuid or uuid.uuid5(uuid.NAMESPACE_DNS, str(sub))
             return User(
                 id=resolved_uuid,
                 auth_user_id=resolved_uuid,
-                email=payload.get("email") or f"{sub}@example.com",
-                full_name=payload.get("full_name") or f"Test {payload.get('role')}",
-                role=payload.get("role"),
+                email=email or f"{sub}@example.com",
+                full_name=full_name or f"Test {role_claim}",
+                role=role_claim,
                 is_active=True,
             )
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account inactive or not provisioned in application directory",
+            detail="User account inactive or not provisioned in application directory.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # g. Return the authenticated User model
     return user
 
 

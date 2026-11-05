@@ -78,15 +78,12 @@ export const LoginPage: React.FC = () => {
           setServerError(
             'Cannot reach backend service (https://api-inventory.moderngebeya.com). Check server connectivity or CORS settings.'
           )
-        } else if (profileErr?.response?.status === 401) {
-          setServerError('User account inactive or not provisioned in application directory.')
-        } else if (profileErr?.response?.status === 403) {
-          setServerError('Access denied. Your account lacks required application permissions.')
         } else {
-          const detail =
+          const errorDetail =
             profileErr?.response?.data?.detail ||
-            'User account inactive or not provisioned in application directory.'
-          setServerError(typeof detail === 'string' ? detail : JSON.stringify(detail))
+            profileErr?.message ||
+            'Failed to authenticate. Please verify your credentials.'
+          setServerError(typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail))
         }
       }
     } catch (err: any) {
@@ -99,9 +96,11 @@ export const LoginPage: React.FC = () => {
           'Cannot reach backend service (https://api-inventory.moderngebeya.com). Check server connectivity or CORS settings.'
         )
       } else {
-        setServerError(
-          err instanceof Error ? err.message : 'Authentication failed. Please verify your connection.'
-        )
+        const errorDetail =
+          err?.response?.data?.detail ||
+          err?.message ||
+          'Failed to authenticate. Please verify your credentials.'
+        setServerError(typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail))
       }
     }
   }

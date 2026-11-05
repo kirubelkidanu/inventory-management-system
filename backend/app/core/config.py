@@ -8,8 +8,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Inventory Management System"
     API_V1_STR: str = "/api/v1"
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/inventory_db"
-    SUPABASE_URL: str = "https://example.supabase.co"
-    SUPABASE_KEY: str = "public-anon-key"
+    SUPABASE_URL: str = "https://kllunchfkzwhpiwhklzz.supabase.co"
+    SUPABASE_KEY: str = "sb_publishable_08sHZvm3HnDFO8hwh5mRog_Rbk_Z33Q"
+    SUPABASE_ANON_KEY: str = "sb_publishable_08sHZvm3HnDFO8hwh5mRog_Rbk_Z33Q"
     SUPABASE_SERVICE_ROLE_KEY: str = "service-role-key"
     SUPABASE_JWT_SECRET: Optional[str] = None
     JWT_SECRET: str = "development-secret-key-change-me"
