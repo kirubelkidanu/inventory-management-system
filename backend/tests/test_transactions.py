@@ -13,11 +13,14 @@ from app.api.routes.transactions import get_transaction_service
 from app.core.config import settings
 from app.main import app
 from app.models.inventory import InventoryBalance
-from app.models.transaction import StockMovement, Transaction, TransactionLine
+from app.models.transaction import StockMovement, Transaction, TransactionLine, TransferRecord, TransferLine
 from app.repositories.transaction import TransactionRepository
 from app.schemas.transaction import (
     GRVCreate,
     SIVCreate,
+    ISTVCreate,
+    ISTRVCreate,
+    ISTRVLineCreate,
     TransactionLineCreate,
     TransactionLineRead,
     TransactionRead,
@@ -588,6 +591,7 @@ async def test_service_siv_decrements_balance_and_creates_out_movement():
     service.repo.create_stock_movement = AsyncMock()
     service.repo.create_audit_log = AsyncMock()
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("100.0000"))
 
     # Request 40 units (available is 100 - 10 = 90 >= 40)
     payload = SIVCreate(
@@ -1077,3 +1081,225 @@ async def test_service_siv_auto_looks_up_latest_inbound_unit_price_when_none():
 
     saved_lines = service.repo.create_transaction_lines.await_args[0][0]
     assert saved_lines[0].unit_price == Decimal("825.2500")
+
+
+@pytest.mark.asyncio
+async def test_service_istv_persists_unit_price_and_computes_total_valuation():
+    """Verifies that ISTV line items persist unit_price and compute total line valuation."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    src_wh = uuid4()
+    dst_wh = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    existing_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=src_wh,
+        item_id=item_id,
+        quantity_on_hand=Decimal("100.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.lock_inventory_balances_for_update = AsyncMock(
+        return_value={item_id: existing_bal}
+    )
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_transfer_record = AsyncMock()
+    service.repo.create_transfer_lines = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+
+    payload = ISTVCreate(
+        source_warehouse_id=src_wh,
+        destination_warehouse_id=dst_wh,
+        plate_no="AA-3-98765",
+        driver_name="Kassahun Desta",
+        lines=[
+            TransactionLineCreate(
+                item_id=item_id,
+                quantity=Decimal("30.0000"),
+                unit="PCS",
+                unit_price=Decimal("520.0000"),
+            )
+        ],
+    )
+
+    tx = await service.create_and_post_istv(user_id=user_id, payload=payload)
+    assert tx.transaction_type == "ISTV"
+    assert tx.status == "POSTED"
+
+    # 1. Verify transaction lines persisted with unit_price
+    service.repo.create_transaction_lines.assert_awaited_once()
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("520.0000")
+
+    # 2. Invariant: source warehouse stock decrements by quantity
+    assert existing_bal.quantity_on_hand == Decimal("70.0000")
+
+    # 3. Verify transfer record and transfer lines created with full integrity
+    service.repo.create_transfer_record.assert_awaited_once()
+    tr = service.repo.create_transfer_record.await_args[0][0]
+    assert tr.status == "IN_TRANSIT"
+    assert tr.source_warehouse_id == src_wh
+    assert tr.destination_warehouse_id == dst_wh
+
+    service.repo.create_transfer_lines.assert_awaited_once()
+    tl_list = service.repo.create_transfer_lines.await_args[0][0]
+    assert len(tl_list) == 1
+    assert tl_list[0].sent_quantity == Decimal("30.0000")
+    assert tl_list[0].received_quantity == Decimal("0.0000")
+
+    # 4. Verify computed total price on schema read
+    line_read = TransactionLineRead.model_validate(saved_lines[0])
+    assert line_read.unit_price == Decimal("520.0000")
+    assert line_read.total_price == Decimal("15600.0000")
+
+
+@pytest.mark.asyncio
+async def test_service_istv_auto_looks_up_latest_inbound_unit_price_when_none_or_zero():
+    """Verifies that ISTV lines automatically resolve to the latest inbound cost when unit_price is None or zero."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    src_wh = uuid4()
+    dst_wh = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    existing_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=src_wh,
+        item_id=item_id,
+        quantity_on_hand=Decimal("80.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.lock_inventory_balances_for_update = AsyncMock(
+        return_value={item_id: existing_bal}
+    )
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_transfer_record = AsyncMock()
+    service.repo.create_transfer_lines = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("740.0000"))
+
+    payload = ISTVCreate(
+        source_warehouse_id=src_wh,
+        destination_warehouse_id=dst_wh,
+        lines=[
+            TransactionLineCreate(
+                item_id=item_id,
+                quantity=Decimal("15.0000"),
+                unit="BAG",
+                unit_price=Decimal("0.00"),  # zero triggers auto-lookup
+            )
+        ],
+    )
+
+    tx = await service.create_and_post_istv(user_id=user_id, payload=payload)
+    service.repo.get_latest_inbound_unit_price.assert_awaited_once_with(
+        item_id=item_id,
+        warehouse_id=src_wh,
+    )
+
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert saved_lines[0].unit_price == Decimal("740.0000")
+
+
+@pytest.mark.asyncio
+async def test_service_istrv_inherits_unit_price_from_originating_istv():
+    """Verifies that receiving an ISTRV inherits the unit price from the originating ISTV line."""
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    src_wh = uuid4()
+    dst_wh = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+    istv_tx_id = uuid4()
+    transfer_record_id = uuid4()
+
+    # Originating ISTV has line with unit_price 650.00
+    istv_line = TransactionLine(
+        id=uuid4(),
+        transaction_id=istv_tx_id,
+        line_number=1,
+        item_id=item_id,
+        quantity=Decimal("50.0000"),
+        unit="PCS",
+        unit_price=Decimal("650.0000"),
+    )
+    istv_tx = Transaction(
+        id=istv_tx_id,
+        transaction_number="ISTV-20261105-001",
+        transaction_type="ISTV",
+        status="POSTED",
+        lines=[istv_line],
+    )
+
+    transfer_line = TransferLine(
+        id=uuid4(),
+        transfer_record_id=transfer_record_id,
+        item_id=item_id,
+        sent_quantity=Decimal("50.0000"),
+        received_quantity=Decimal("0.0000"),
+    )
+    transfer_record = TransferRecord(
+        id=transfer_record_id,
+        istv_transaction_id=istv_tx_id,
+        source_warehouse_id=src_wh,
+        destination_warehouse_id=dst_wh,
+        status="IN_TRANSIT",
+        lines=[transfer_line],
+    )
+
+    dst_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=dst_wh,
+        item_id=item_id,
+        quantity_on_hand=Decimal("0.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.get_transfer_record_by_istv_id = AsyncMock(return_value=transfer_record)
+    service.repo.get_transaction_by_id = AsyncMock(side_effect=lambda id_: istv_tx if id_ == istv_tx_id else None)
+    service.repo.lock_inventory_balances_for_update = AsyncMock(
+        return_value={item_id: dst_bal}
+    )
+    service.repo.get_or_create_balance = AsyncMock(return_value=dst_bal)
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+
+    payload = ISTRVCreate(
+        istv_transaction_id=istv_tx_id,
+        destination_warehouse_id=dst_wh,
+        lines=[
+            ISTRVLineCreate(
+                item_id=item_id,
+                quantity=Decimal("50.0000"),
+            )
+        ],
+    )
+
+    tx = await service.create_and_post_istrv(user_id=user_id, payload=payload)
+    assert tx.transaction_type == "ISTRV"
+
+    service.repo.create_transaction_lines.assert_awaited_once()
+    saved_lines = service.repo.create_transaction_lines.await_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("650.0000")
+    assert saved_lines[0].unit == "PCS"
+    assert dst_bal.quantity_on_hand == Decimal("50.0000")

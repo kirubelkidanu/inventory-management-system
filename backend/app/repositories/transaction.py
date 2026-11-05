@@ -263,6 +263,7 @@ class TransactionRepository:
                 Transaction.status == "POSTED",
                 or_(
                     Transaction.transaction_type == "GRV",
+                    Transaction.transaction_type == "ISTRV",
                     and_(
                         Transaction.transaction_type == "ADJUSTMENT",
                         Transaction.external_reference == "OPENING_BALANCE",
@@ -274,7 +275,12 @@ class TransactionRepository:
         )
         try:
             if warehouse_id is not None:
-                wh_stmt = base_stmt.where(Transaction.warehouse_id == warehouse_id).order_by(
+                wh_stmt = base_stmt.where(
+                    or_(
+                        Transaction.warehouse_id == warehouse_id,
+                        Transaction.destination_warehouse_id == warehouse_id,
+                    )
+                ).order_by(
                     Transaction.transaction_date.desc(), Transaction.created_at.desc()
                 ).limit(1)
                 result = await self.session.execute(wh_stmt)
@@ -307,6 +313,7 @@ class TransactionRepository:
                 Transaction.status == "POSTED",
                 or_(
                     Transaction.transaction_type == "GRV",
+                    Transaction.transaction_type == "ISTRV",
                     and_(
                         Transaction.transaction_type == "ADJUSTMENT",
                         Transaction.external_reference == "OPENING_BALANCE",

@@ -295,7 +295,7 @@ class TransactionService:
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
                 unit_price = None
-                if line_input.unit_price is not None:
+                if line_input.unit_price is not None and Decimal(str(line_input.unit_price)) > Decimal("0"):
                     unit_price = Decimal(str(line_input.unit_price))
                 else:
                     if hasattr(self.repo, "get_latest_inbound_unit_price"):
@@ -469,13 +469,13 @@ class TransactionService:
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
                 unit_price = None
-                if line_input.unit_price is not None:
+                if line_input.unit_price is not None and Decimal(str(line_input.unit_price)) > Decimal("0"):
                     unit_price = Decimal(str(line_input.unit_price))
                 else:
                     if hasattr(self.repo, "get_latest_inbound_unit_price"):
                         unit_price = await self.repo.get_latest_inbound_unit_price(
                             item_id=line_input.item_id,
-                            warehouse_id=getattr(payload, "warehouse_id", None) or getattr(payload, "source_warehouse_id", None),
+                            warehouse_id=payload.source_warehouse_id,
                         )
 
                 line = TransactionLine(
@@ -671,11 +671,13 @@ class TransactionService:
                         ),
                     )
 
-            # 5. Look up units from originating ISTV transaction lines
+            # 5. Look up units and unit prices from originating ISTV transaction lines
             istv_tx = await self.repo.get_transaction_by_id(payload.istv_transaction_id)
             unit_by_item: dict[uuid.UUID, str] = {}
+            unit_price_by_item: dict[uuid.UUID, Optional[Decimal]] = {}
             if istv_tx and istv_tx.lines:
                 unit_by_item = {l.item_id: l.unit for l in istv_tx.lines}
+                unit_price_by_item = {l.item_id: l.unit_price for l in istv_tx.lines}
 
             # 6. Deterministic balance row locking on destination warehouse
             locked_balances = await self.repo.lock_inventory_balances_for_update(
@@ -703,6 +705,17 @@ class TransactionService:
             lines: List[TransactionLine] = []
             for idx, line_input in enumerate(payload.lines, start=1):
                 unit = unit_by_item.get(line_input.item_id, "PCS")
+                line_unit_price = None
+                if getattr(line_input, "unit_price", None) is not None and Decimal(str(line_input.unit_price)) > Decimal("0"):
+                    line_unit_price = Decimal(str(line_input.unit_price))
+                else:
+                    line_unit_price = unit_price_by_item.get(line_input.item_id)
+                    if line_unit_price is None and hasattr(self.repo, "get_latest_inbound_unit_price"):
+                        line_unit_price = await self.repo.get_latest_inbound_unit_price(
+                            item_id=line_input.item_id,
+                            warehouse_id=transfer_record.source_warehouse_id,
+                        )
+
                 line = TransactionLine(
                     id=uuid.uuid4(),
                     transaction_id=tx_id,
@@ -710,6 +723,7 @@ class TransactionService:
                     item_id=line_input.item_id,
                     quantity=line_input.quantity,
                     unit=unit,
+                    unit_price=line_unit_price,
                     remarks=line_input.remarks,
                 )
                 lines.append(line)

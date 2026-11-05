@@ -935,3 +935,45 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
 - **Ledger Invariants**: Stock transactions, dual writes, and `vw_reconciliation_discrepancies` remain 100% in balance.
 - **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).
+
+---
+
+## 2026-11-05 – ISTV Unit Price Lookup, Total Price Calculation & Trial Balance Valuation
+
+### 1. Architectural Scope & Implementation
+- **Backend Service Valuation Handling (`backend/app/services/transaction.py`)**:
+  * In `create_and_post_istv`:
+    - Checks `line_input.unit_price`. If omitted or zero, automatically resolves `unit_price` using `TransactionRepository.get_latest_inbound_unit_price(item_id, source_warehouse_id)`.
+    - Persists `unit_price` into `transaction_lines.unit_price` for each line during the atomic transaction.
+    - Preserves all invariants: source warehouse stock decrement (`inventory_balances.quantity_on_hand -= quantity`), append-only stock movement (`movement_type='OUT'`, `signed_quantity = -quantity`), and `IN_TRANSIT` transfer record creation.
+  * In `create_and_post_siv`:
+    - Updated fallback so lines with `unit_price == 0` or omitted auto-resolve to the latest inbound acquisition cost.
+  * In `create_and_post_istrv`:
+    - Pre-indexes unit prices from originating ISTV transaction lines: `unit_price_by_item = {l.item_id: l.unit_price for l in istv_tx.lines}`.
+    - Ensures receiving lines inherit the exact transfer cost from the originating ISTV, or falls back to latest inbound unit price.
+- **Backend Repository Layer (`backend/app/repositories/transaction.py`)**:
+  * Extended `get_latest_inbound_unit_price` and `get_latest_inbound_unit_prices_batch` to include `Transaction.transaction_type == "ISTRV"` alongside `GRV` and `OPENING_BALANCE` adjustments.
+  * Checked both `Transaction.warehouse_id == warehouse_id` and `Transaction.destination_warehouse_id == warehouse_id` for accurate warehouse cost tracking.
+- **Backend Schemas (`backend/app/schemas/transaction.py`)**:
+  * Extended `ISTRVLineCreate` to support optional `unit_price: Optional[Decimal] = Field(None, ge=0)`.
+- **Trial Balance Reporting Integration (`backend/app/repositories/report.py`, `backend/app/services/report.py`)**:
+  * Because `TransactionLine.unit_price` is now populated for ISTV dispatches, the Trial Balance ledger automatically retrieves `unit_price`, calculates `total_price = quantity * unit_price`, and reports accurate valuations for transfer movements.
+- **Frontend ISTV Dispatch Interface (`frontend/src/features/transactions/ISTVPage.tsx`, `TransactionDetailPage.tsx`)**:
+  * `ISTVPage.tsx`:
+    - Added `Unit Price (ETB)` input column (min: 0, step: 0.01).
+    - Added `Total Price (ETB)` read-only auto-calculated display box (`quantity * (unit_price || 0)`) formatted with 2 decimal places and thousands separators.
+    - When an item is selected from `ItemCombobox`, automatically defaults `unit_price` to `item.latest_unit_price` and queries `/items/{id}/latest-cost?warehouse_id=${sourceWarehouseId}`.
+    - Added summary box below the table: `Total Lines`, `Total Dispatched Quantity`, and `Total Dispatched Valuation (ETB)`.
+    - Included `unit_price` in the payload sent to `POST /api/v1/transactions/istv`.
+  * `TransactionDetailPage.tsx`:
+    - Extended pricing visibility condition (`isGRV`) to include `'ISTV'` and `'ISTRV'` vouchers so Unit Price, Total Price, and total valuation banner display when inspecting transfer vouchers.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 271 passed in 4.24s across all 16 test modules (100% passing).
+  * Added `test_service_istv_persists_unit_price_and_computes_total_valuation` in `backend/tests/test_transactions.py`.
+  * Added `test_service_istv_auto_looks_up_latest_inbound_unit_price_when_none_or_zero` in `backend/tests/test_transactions.py`.
+  * Added `test_service_istrv_inherits_unit_price_from_originating_istv` in `backend/tests/test_transactions.py`.
+  * Fixed unmocked `get_latest_inbound_unit_price` RuntimeWarnings in `test_transactions.py` and `test_transfers.py`.
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed with 0 errors (1,705 modules transformed).
+- **Ledger Invariants**: Stock dual writes, transfer in-transit records, and `vw_reconciliation_discrepancies` remain 100% in balance with zero discrepancies.
+- **Security Check**: Verified 0 exposed credentials or secrets (AGENTS.md Rule 5 & 6).

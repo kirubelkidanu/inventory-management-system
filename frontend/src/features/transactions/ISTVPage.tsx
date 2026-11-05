@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { Truck, Plus, Trash2, ShieldAlert, Loader2, AlertTriangle, ArrowLeft } from 'lucide-react'
 import { useWarehouses } from '@/features/inventory/useInventoryData'
@@ -11,6 +11,14 @@ import {
 } from './useTransactionData'
 import { VoucherSuccessCard } from './VoucherSuccessCard'
 import type { Item, Transaction } from '@/types'
+
+interface ISTVLineForm {
+  item_id: string
+  quantity: string
+  unit: string
+  unit_price: string
+  remarks: string
+}
 
 export const ISTVPage: React.FC = () => {
   const [searchParams] = useSearchParams()
@@ -31,23 +39,26 @@ export const ISTVPage: React.FC = () => {
     new Date().toISOString().split('T')[0]
   )
   const [remarks, setRemarks] = useState('')
-  const [lines, setLines] = useState([
-    { item_id: initialItemId, quantity: '1', unit: 'PCS', remarks: '' },
+  const [lines, setLines] = useState<ISTVLineForm[]>([
+    { item_id: initialItemId, quantity: '1', unit: 'PCS', unit_price: '0.00', remarks: '' },
   ])
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [postedTransaction, setPostedTransaction] = useState<Transaction | null>(null)
 
   const createISTVMutation = useCreateISTV()
 
-  // Update initial line unit if initialItemId is provided
+  // Update initial line unit and price if initialItemId is provided
   useEffect(() => {
     if (initialItemId) {
       api.get<Item>(`/items/${initialItemId}`).then((res) => {
-        if (res.data?.default_unit) {
+        if (res.data) {
           setLines((prev) => {
             const updated = [...prev]
             if (updated[0] && updated[0].item_id === initialItemId) {
-              updated[0].unit = res.data.default_unit
+              if (res.data.default_unit) updated[0].unit = res.data.default_unit
+              if (res.data.latest_unit_price !== undefined && res.data.latest_unit_price !== null && Number(res.data.latest_unit_price) >= 0) {
+                updated[0].unit_price = Number(res.data.latest_unit_price).toFixed(2)
+              }
             }
             return updated
           })
@@ -63,17 +74,45 @@ export const ISTVPage: React.FC = () => {
     }
   }, [initialSourceWhId, sourceWarehouseId])
 
-  const handleItemChange = (idx: number, newItemId: string, item?: Item) => {
+  const handleItemChange = async (idx: number, newItemId: string, item?: Item) => {
     const updated = [...lines]
     updated[idx].item_id = newItemId
     if (item?.default_unit) {
       updated[idx].unit = item.default_unit
     }
+
+    // Auto-populate unit price if available on item object
+    if (item?.latest_unit_price !== undefined && item?.latest_unit_price !== null && Number(item.latest_unit_price) >= 0) {
+      updated[idx].unit_price = Number(item.latest_unit_price).toFixed(2)
+    } else {
+      updated[idx].unit_price = '0.00'
+    }
     setLines(updated)
+
+    // Also query latest-cost endpoint for warehouse-specific cost if available
+    if (newItemId) {
+      try {
+        const costRes = await api.get<{ item_id: string; latest_unit_price: number | null }>(
+          `/items/${newItemId}/latest-cost`,
+          { params: sourceWarehouseId ? { warehouse_id: sourceWarehouseId } : {} }
+        )
+        if (costRes.data?.latest_unit_price !== undefined && costRes.data?.latest_unit_price !== null) {
+          setLines((prev) => {
+            const current = [...prev]
+            if (current[idx] && current[idx].item_id === newItemId) {
+              current[idx].unit_price = Number(costRes.data.latest_unit_price).toFixed(2)
+            }
+            return current
+          })
+        }
+      } catch {
+        // Keep initial price if lookup fails
+      }
+    }
   }
 
   const addLine = () => {
-    setLines([...lines, { item_id: '', quantity: '1', unit: 'PCS', remarks: '' }])
+    setLines([...lines, { item_id: '', quantity: '1', unit: 'PCS', unit_price: '0.00', remarks: '' }])
   }
 
   const removeLine = (idx: number) => {
@@ -81,6 +120,21 @@ export const ISTVPage: React.FC = () => {
       setLines(lines.filter((_, i) => i !== idx))
     }
   }
+
+  const totalValuation = useMemo(() => {
+    return lines.reduce((sum, line) => {
+      const qty = parseFloat(line.quantity) || 0
+      const price = parseFloat(line.unit_price) || 0
+      return sum + qty * price
+    }, 0)
+  }, [lines])
+
+  const totalQuantity = useMemo(() => {
+    return lines.reduce((sum, line) => {
+      const qty = parseFloat(line.quantity) || 0
+      return sum + qty
+    }, 0)
+  }, [lines])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -102,18 +156,24 @@ export const ISTVPage: React.FC = () => {
     }
 
     // Validate lines
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
       if (!line.item_id) {
-        setErrorMessage('All lines must have a selected Item SKU.')
+        setErrorMessage(`Line ${i + 1}: Item SKU is required.`)
         return
       }
       const qty = parseFloat(line.quantity)
       if (isNaN(qty) || qty <= 0) {
-        setErrorMessage('All line quantities must be greater than zero.')
+        setErrorMessage(`Line ${i + 1}: Quantity must be greater than zero.`)
         return
       }
       if (!line.unit.trim()) {
-        setErrorMessage('All lines must specify a unit of measurement.')
+        setErrorMessage(`Line ${i + 1}: Unit of measurement is required.`)
+        return
+      }
+      const price = line.unit_price !== '' ? parseFloat(line.unit_price) : 0
+      if (isNaN(price) || price < 0) {
+        setErrorMessage(`Line ${i + 1}: Unit price must be greater than or equal to 0.`)
         return
       }
     }
@@ -140,6 +200,7 @@ export const ISTVPage: React.FC = () => {
           item_id: l.item_id,
           quantity: parseFloat(l.quantity),
           unit: l.unit.trim(),
+          unit_price: l.unit_price !== '' && !isNaN(parseFloat(l.unit_price)) ? parseFloat(l.unit_price) : 0,
           remarks: l.remarks.trim() || undefined,
         })),
       }
@@ -158,7 +219,7 @@ export const ISTVPage: React.FC = () => {
     setDriverName('')
     setMaterialSummary('')
     setRemarks('')
-    setLines([{ item_id: '', quantity: '1', unit: 'PCS', remarks: '' }])
+    setLines([{ item_id: '', quantity: '1', unit: 'PCS', unit_price: '0.00', remarks: '' }])
     setErrorMessage(null)
   }
 
@@ -186,7 +247,7 @@ export const ISTVPage: React.FC = () => {
               Inter-Store Transfer Voucher (ISTV)
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              Dispatch inventory between company warehouses. Decrements source stock, logs transport vehicle/driver accountability, and creates tracked in-transit records.
+              Dispatch inventory between company warehouses. Decrements source stock, logs transport vehicle/driver accountability, and creates tracked in-transit records with accurate unit valuation.
             </p>
           </div>
         </div>
@@ -335,7 +396,7 @@ export const ISTVPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Dispatched Items</h3>
-              <p className="text-xs text-slate-500">Source warehouse must hold sufficient available stock</p>
+              <p className="text-xs text-slate-500">Source warehouse must hold sufficient available stock. Unit price defaults to latest inbound acquisition cost.</p>
             </div>
             <button
               type="button"
@@ -348,78 +409,133 @@ export const ISTVPage: React.FC = () => {
           </div>
 
           <div className="mt-3 space-y-3">
-            {lines.map((line, idx) => (
-              <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
-                <div className="flex-1 min-w-[240px]">
-                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Item SKU & Description *</label>
-                  <ItemCombobox
-                    value={line.item_id}
-                    onChange={(newItemId, selectedItem) => handleItemChange(idx, newItemId, selectedItem)}
-                    required
-                    placeholder="Search SKU or description..."
-                    excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
-                  />
-                </div>
+            {lines.map((line, idx) => {
+              const qtyNum = parseFloat(line.quantity) || 0
+              const priceNum = parseFloat(line.unit_price) || 0
+              const lineTotal = qtyNum * priceNum
 
-                <div className="w-28">
-                  <label className="block text-[11px] font-medium text-slate-500">Quantity *</label>
-                  <input
-                    type="number"
-                    min="0.0001"
-                    step="any"
-                    value={line.quantity}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].quantity = e.target.value
-                      setLines(updated)
-                    }}
-                    required
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-purple-500 focus:outline-hidden"
-                  />
-                </div>
+              return (
+                <div key={idx} className="flex flex-wrap lg:flex-nowrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3.5">
+                  <div className="flex-1 min-w-[220px]">
+                    <label className="block text-[11px] font-medium text-slate-500 mb-1">Item SKU & Description *</label>
+                    <ItemCombobox
+                      value={line.item_id}
+                      onChange={(newItemId, selectedItem) => handleItemChange(idx, newItemId, selectedItem)}
+                      required
+                      placeholder="Search SKU or description..."
+                      excludeItemIds={lines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
+                    />
+                  </div>
 
-                <div className="w-24">
-                  <label className="block text-[11px] font-medium text-slate-500">Unit *</label>
-                  <input
-                    type="text"
-                    value={line.unit}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].unit = e.target.value
-                      setLines(updated)
-                    }}
-                    required
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-purple-500 focus:outline-hidden"
-                  />
-                </div>
+                  <div className="w-24">
+                    <label className="block text-[11px] font-medium text-slate-500">Quantity *</label>
+                    <input
+                      type="number"
+                      min="0.0001"
+                      step="any"
+                      value={line.quantity}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].quantity = e.target.value
+                        setLines(updated)
+                      }}
+                      required
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-purple-500 focus:outline-hidden"
+                    />
+                  </div>
 
-                <div className="flex-1 min-w-[150px]">
-                  <label className="block text-[11px] font-medium text-slate-500">Line Remarks</label>
-                  <input
-                    type="text"
-                    value={line.remarks}
-                    onChange={(e) => {
-                      const updated = [...lines]
-                      updated[idx].remarks = e.target.value
-                      setLines(updated)
-                    }}
-                    placeholder="e.g. Bundle 4"
-                    className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-purple-500 focus:outline-hidden"
-                  />
-                </div>
+                  <div className="w-20">
+                    <label className="block text-[11px] font-medium text-slate-500">Unit *</label>
+                    <input
+                      type="text"
+                      value={line.unit}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].unit = e.target.value
+                        setLines(updated)
+                      }}
+                      required
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-purple-500 focus:outline-hidden"
+                    />
+                  </div>
 
-                <div className="pt-4">
-                  <button
-                    type="button"
-                    onClick={() => removeLine(idx)}
-                    disabled={lines.length === 1}
-                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-200 hover:text-red-600 disabled:opacity-30 transition-colors"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="w-28">
+                    <label className="block text-[11px] font-medium text-slate-500">Unit Price (ETB)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={line.unit_price}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].unit_price = e.target.value
+                        setLines(updated)
+                      }}
+                      placeholder="0.00"
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white font-mono focus:border-purple-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <div className="w-32">
+                    <label className="block text-[11px] font-medium text-slate-500">Total Price (ETB)</label>
+                    <div className="mt-1 flex items-center h-[34px] rounded-lg border border-slate-200 bg-slate-100/70 py-2 px-3 text-xs font-mono font-semibold text-slate-800">
+                      {lineTotal.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-w-[150px]">
+                    <label className="block text-[11px] font-medium text-slate-500">Line Remarks</label>
+                    <input
+                      type="text"
+                      value={line.remarks}
+                      onChange={(e) => {
+                        const updated = [...lines]
+                        updated[idx].remarks = e.target.value
+                        setLines(updated)
+                      }}
+                      placeholder="e.g. Bundle 4"
+                      className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-xs bg-white focus:border-purple-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <div className="pt-4">
+                    <button
+                      type="button"
+                      onClick={() => removeLine(idx)}
+                      disabled={lines.length === 1}
+                      className="rounded-lg p-2 text-slate-400 hover:bg-slate-200 hover:text-red-600 disabled:opacity-30 transition-colors"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
+              )
+            })}
+          </div>
+
+          {/* Summary Box */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+            <div className="flex items-center gap-6">
+              <div>
+                <span className="text-xs font-medium text-slate-500">Total Lines</span>
+                <p className="font-mono text-sm font-bold text-slate-800">{lines.length}</p>
               </div>
-            ))}
+              <div className="border-l border-slate-200 pl-6">
+                <span className="text-xs font-medium text-slate-500">Total Dispatched Quantity</span>
+                <p className="font-mono text-sm font-bold text-slate-800">
+                  {totalQuantity.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 })}
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="text-xs font-medium text-slate-500">Total Dispatched Valuation (ETB)</span>
+              <p className="font-mono text-lg font-extrabold text-purple-700">
+                ETB {totalValuation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            </div>
           </div>
         </div>
 

@@ -97,6 +97,7 @@ class ISTVCreate(BaseModel):
 class ISTRVLineCreate(BaseModel):
     item_id: uuid.UUID
     quantity: Decimal = Field(..., gt=0, description="Quantity must be strictly positive")
+    unit_price: Optional[Decimal] = Field(None, ge=0, description="Unit price / cost (>= 0)")
     remarks: Optional[str] = None
 
 

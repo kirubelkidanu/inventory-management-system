@@ -315,6 +315,7 @@ async def test_istv_success():
     service.repo.create_transfer_lines = AsyncMock()
     service.repo.create_audit_log = AsyncMock()
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("120.0000"))
 
     payload = ISTVCreate(
         source_warehouse_id=src_wh,
@@ -454,6 +455,7 @@ async def test_istrv_full_receiving():
 
     service.repo.get_transfer_record_by_istv_id = AsyncMock(return_value=tr)
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("100.0000"))
     service.repo.lock_inventory_balances_for_update = AsyncMock(
         return_value={item_id: dst_bal}
     )
@@ -538,6 +540,7 @@ async def test_istrv_partial_receiving():
 
     service.repo.get_transfer_record_by_istv_id = AsyncMock(return_value=tr)
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("100.0000"))
     service.repo.lock_inventory_balances_for_update = AsyncMock(
         return_value={item_id: dst_bal}
     )
@@ -603,6 +606,7 @@ async def test_istrv_subsequent_receiving_completes_transfer():
 
     service.repo.get_transfer_record_by_istv_id = AsyncMock(return_value=tr)
     service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("100.0000"))
     service.repo.lock_inventory_balances_for_update = AsyncMock(
         return_value={item_id: dst_bal}
     )
