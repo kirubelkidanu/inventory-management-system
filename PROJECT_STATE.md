@@ -1151,3 +1151,25 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Security Check**: Verified 0 exposed service-role or private secrets; only the public publishable anon key is configured in client environments (AGENTS.md Rules 5 & 6).
 - **CI/CD Alignment**: `.github/workflows/deploy-frontend.yml` injects explicit production Supabase and API URLs to prevent missing CI environment fallbacks.
 
+---
+
+## 2026-11-05 — API Routing to api-inventory.moderngebeya.com, CORS Whitelisting & Network Error Diagnostics
+
+### 1. Architectural Scope & Implementation
+- **API URL Alignment (`frontend/src/lib/api.ts`, `frontend/.env`, `frontend/.env.production`, `.github/workflows/deploy-frontend.yml`)**:
+  * Set authoritative production backend endpoint: `https://api-inventory.moderngebeya.com/api/v1`.
+  * Configured default fallback in `frontend/src/lib/api.ts` to `https://api-inventory.moderngebeya.com/api/v1` so build-time environments without `.env` reliably target the production backend.
+  * Updated Axios request interceptor to auto-attach Supabase session Bearer tokens directly when missing from localStorage.
+- **Backend CORS Whitelist Verification (`backend/app/main.py`, `backend/app/core/config.py`)**:
+  * Verified `CORSMiddleware` in FastAPI includes `https://inventory.moderngebeya.com`, `http://inventory.moderngebeya.com`, `http://localhost:5173`, and `http://localhost:3000` with `allow_credentials=True`, `allow_methods=["*"]`, `allow_headers=["*"]`.
+- **Login Network & Status Error Diagnostics (`frontend/src/features/auth/LoginPage.tsx`)**:
+  * Distinctly separated Axios/browser network unreachable and CORS blocking errors (`ERR_NETWORK` or `!err.response`) from HTTP 401 unprovisioned user responses and HTTP 403 forbidden permissions responses.
+  * Explicitly displays: "Cannot reach backend service (https://api-inventory.moderngebeya.com). Check server connectivity or CORS settings." when connection fails.
+
+### 2. Verification & Quality Gates
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.82s).
+- **Asset Audit**: Verified `api.moderngebeya.com` (without `-inventory`) appears ZERO times across generated assets in `frontend/dist/`.
+- **Backend Tests**: 280 passed in 22.89s across all 16 test modules (100% passing).
+- **Security Check**: 0 private keys or secrets exposed (AGENTS.md Rules 5 & 6).
+
+

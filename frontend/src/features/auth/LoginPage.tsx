@@ -70,15 +70,39 @@ export const LoginPage: React.FC = () => {
       } catch (profileErr: any) {
         await supabase.auth.signOut()
         setAuthToken(null)
-        const detail =
-          profileErr?.response?.data?.detail ||
-          'User account inactive or not provisioned in application directory'
-        setServerError(detail)
+        if (
+          profileErr?.message?.includes('Network Error') ||
+          !profileErr?.response ||
+          profileErr?.code === 'ERR_NETWORK'
+        ) {
+          setServerError(
+            'Cannot reach backend service (https://api-inventory.moderngebeya.com). Check server connectivity or CORS settings.'
+          )
+        } else if (profileErr?.response?.status === 401) {
+          setServerError('User account inactive or not provisioned in application directory.')
+        } else if (profileErr?.response?.status === 403) {
+          setServerError('Access denied. Your account lacks required application permissions.')
+        } else {
+          const detail =
+            profileErr?.response?.data?.detail ||
+            'User account inactive or not provisioned in application directory.'
+          setServerError(typeof detail === 'string' ? detail : JSON.stringify(detail))
+        }
       }
-    } catch (err: unknown) {
-      setServerError(
-        err instanceof Error ? err.message : 'Authentication failed. Please verify your connection.'
-      )
+    } catch (err: any) {
+      if (
+        err?.message?.includes('Network Error') ||
+        (err && typeof err === 'object' && !('response' in err)) ||
+        err?.code === 'ERR_NETWORK'
+      ) {
+        setServerError(
+          'Cannot reach backend service (https://api-inventory.moderngebeya.com). Check server connectivity or CORS settings.'
+        )
+      } else {
+        setServerError(
+          err instanceof Error ? err.message : 'Authentication failed. Please verify your connection.'
+        )
+      }
     }
   }
 

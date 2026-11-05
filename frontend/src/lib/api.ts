@@ -1,6 +1,10 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import { supabase } from '@/lib/supabase'
 
-const rawBaseUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api/v1'
+const rawBaseUrl =
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  'https://api-inventory.moderngebeya.com/api/v1'
 const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '')
 
 export const api = axios.create({
@@ -29,10 +33,21 @@ if (typeof window !== 'undefined') {
   }
 }
 
-// Request Interceptor: Attach JWT Bearer Token and sanitize URLs to avoid double slashes
+// Request Interceptor: Attach JWT Bearer Token from active Supabase session or localStorage and sanitize URLs
 api.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem('access_token')
+  async (config: InternalAxiosRequestConfig) => {
+    let token = localStorage.getItem('access_token')
+    if (!token && typeof window !== 'undefined') {
+      try {
+        const { data } = await supabase.auth.getSession()
+        token = data.session?.access_token || null
+        if (token) {
+          localStorage.setItem('access_token', token)
+        }
+      } catch {
+        // Fallback silently if session cannot be retrieved
+      }
+    }
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
     }
