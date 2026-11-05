@@ -1145,7 +1145,9 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
   * Scanned output bundles in `frontend/dist/assets/`: 0 occurrences of placeholder `your-project.supabase.co` found, verified presence of official Supabase endpoint `https://kllunchfkzwhpiwhklzz.supabase.co`.
 
 ### 2. Verification & Quality Gates
-- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.71s).
-- **Backend Tests**: 280 passed in 39.37s across all 16 test modules (100% passing).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.62s; new bundle hash `index-CNcCJ6UO.js`).
+- **Placeholder Audit**: Verified 0 occurrences of `your-project.supabase.co` across all source and built bundle files.
+- **Backend Tests**: 280 passed in 26.56s across all 16 test modules (100% passing).
 - **Security Check**: Verified 0 exposed service-role or private secrets; only the public publishable anon key is configured in client environments (AGENTS.md Rules 5 & 6).
+- **CI/CD Alignment**: `.github/workflows/deploy-frontend.yml` injects explicit production Supabase and API URLs to prevent missing CI environment fallbacks.
 
