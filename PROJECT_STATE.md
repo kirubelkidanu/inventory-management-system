@@ -2,6 +2,12 @@
 
 Production Authentication & Asymmetric ES256 / JWKS Supabase Auth Hardened
 
+- Fixed 2-3s dashboard reload loop and verified token latency:
+  * Eliminated window.location.href hard reloads from Axios response interceptor
+  * Token resolution unified via getStoredToken() (supporting ims_token, access_token, and Supabase sb-*-auth-token)
+  * Synchronous user state hydration from ims_user / auth_user prevents cold boot flash
+  * Added backend in-memory TTL token cache (300s) resolving concurrent dashboard queries in 0ms without external HTTP hops
+
 - Stabilized AuthContext state management and ProtectedRoute rendering to eliminate infinite initializing loop:
   * isLoading only true during cold boot; never toggled back to true on background events
   * Profile fetches to /auth/me deduplicated via lastFetchedTokenRef and isFetchingRef

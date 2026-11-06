@@ -282,7 +282,7 @@ async def test_get_current_user_auto_links_user_by_email(monkeypatch):
     mock_db.commit = AsyncMock()
     mock_db.refresh = AsyncMock()
 
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="supabase-test-token")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="supabase-test-link-token")
     user = await get_current_user(credentials=creds, db=mock_db)
 
     assert user.auth_user_id == new_sub
@@ -312,7 +312,7 @@ async def test_get_current_user_auto_provisions_admin_sabelkidanu(monkeypatch):
     mock_db.commit = AsyncMock()
     mock_db.refresh = AsyncMock()
 
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="supabase-test-token")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="supabase-test-admin-token")
     user = await get_current_user(credentials=creds, db=mock_db)
 
     assert user.email == "sabelkidanu@gmail.com"
@@ -430,4 +430,47 @@ async def test_get_current_user_all_tiers_failed_includes_diagnostics():
     assert "Diagnostics: [Tier 1" in exc_info.value.detail
     assert "Tier 2" in exc_info.value.detail
     assert "Tier 3" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_verified_token_cache(monkeypatch):
+    """Tests that token verification is cached in-memory and subsequent calls avoid network hits."""
+    from unittest.mock import AsyncMock, MagicMock
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    test_sub = uuid.uuid4()
+    mock_get = AsyncMock(
+        return_value=httpx.Response(
+            200,
+            json={"id": str(test_sub), "email": "cached_user@example.com", "user_metadata": {"role": "ADMIN"}},
+        )
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+
+    mock_db = AsyncMock()
+    user_record = User(
+        id=test_sub,
+        auth_user_id=test_sub,
+        email="cached_user@example.com",
+        full_name="Cached User",
+        role="ADMIN",
+        is_active=True,
+    )
+    res = MagicMock()
+    res.scalar_one_or_none.return_value = user_record
+    mock_db.execute = AsyncMock(return_value=res)
+
+    token_str = f"test-cache-token-{uuid.uuid4()}"
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token_str)
+
+    # First call: hits network / Tier 1
+    user1 = await get_current_user(credentials=creds, db=mock_db)
+    assert user1.auth_user_id == test_sub
+    assert mock_get.call_count == 1
+
+    # Second call with the same token: hits cache, network call count remains 1
+    user2 = await get_current_user(credentials=creds, db=mock_db)
+    assert user2.auth_user_id == test_sub
+    assert mock_get.call_count == 1
+
 

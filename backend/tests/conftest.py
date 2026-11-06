@@ -92,9 +92,12 @@ async def test_get_current_user(
 @pytest.fixture(autouse=True)
 def override_auth_dependency():
     """Overrides get_current_user on the FastAPI app for offline testing."""
+    from app.dependencies import clear_token_cache
+    clear_token_cache()
     app.dependency_overrides[get_current_user] = test_get_current_user
     yield
     app.dependency_overrides.pop(get_current_user, None)
+    clear_token_cache()
 
 
 @pytest.fixture(autouse=True)

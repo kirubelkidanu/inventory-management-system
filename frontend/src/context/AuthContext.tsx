@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react'
 import type { User, UserRole } from '@/types'
 import { supabase } from '@/lib/supabase'
-import { api, setAuthToken } from '@/lib/api'
+import { api, setAuthToken, getStoredToken } from '@/lib/api'
 
 interface AuthContextType {
   user: User | null
@@ -17,18 +17,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Synchronously seed initial state from localStorage if available
+  // Synchronously seed initial state from localStorage so page refreshes never flash unauthenticated
   const [token, setToken] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('access_token')
-    }
-    return null
+    return getStoredToken()
   })
 
   const [user, setUser] = useState<User | null>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem('auth_user')
+        const stored = localStorage.getItem('ims_user') || localStorage.getItem('auth_user')
         return stored ? JSON.parse(stored) : null
       } catch {
         return null
@@ -37,7 +34,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null
   })
 
-  // isLoading starts true on initial mount and permanently transitions to false
+  // isLoading starts true on initial mount and permanently transitions to false once checked
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [isInitialized, setIsInitialized] = useState<boolean>(false)
 
@@ -76,22 +73,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(profile)
       setToken(accessToken)
       if (typeof window !== 'undefined') {
+        localStorage.setItem('ims_user', JSON.stringify(profile))
         localStorage.setItem('auth_user', JSON.stringify(profile))
+        localStorage.setItem('ims_token', accessToken)
         localStorage.setItem('access_token', accessToken)
       }
       return profile
     } catch (err: any) {
       console.warn('[AuthContext] Profile fetch error:', err)
       const status = err?.response?.status
-      // Only clear user on confirmed 401 unauthorized or when no profile was ever loaded
-      if (status === 401 || !currentUserRef.current) {
+      // Only clear user on confirmed 401 unauthorized if there is no user profile loaded
+      if (status === 401 && !currentUserRef.current) {
         lastFetchedTokenRef.current = null
         currentUserRef.current = null
         setUser(null)
         setToken(null)
         setAuthToken(null)
         if (typeof window !== 'undefined') {
+          localStorage.removeItem('ims_user')
           localStorage.removeItem('auth_user')
+          localStorage.removeItem('ims_token')
           localStorage.removeItem('access_token')
         }
       }
@@ -110,15 +111,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (session?.access_token) {
           await fetchUserProfile(session.access_token)
         } else {
-          // No active Supabase session
-          if (isMounted) {
+          // No active Supabase session: only clear if there is no existing cached user
+          if (isMounted && !currentUserRef.current) {
             lastFetchedTokenRef.current = null
             currentUserRef.current = null
             setToken(null)
             setUser(null)
             setAuthToken(null)
             if (typeof window !== 'undefined') {
+              localStorage.removeItem('ims_user')
               localStorage.removeItem('auth_user')
+              localStorage.removeItem('ims_token')
               localStorage.removeItem('access_token')
             }
           }
@@ -145,7 +148,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(null)
             setAuthToken(null)
             if (typeof window !== 'undefined') {
+              localStorage.removeItem('ims_user')
               localStorage.removeItem('auth_user')
+              localStorage.removeItem('ims_token')
               localStorage.removeItem('access_token')
             }
           }
@@ -161,6 +166,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setToken(accessToken)
             lastFetchedTokenRef.current = accessToken
             if (typeof window !== 'undefined') {
+              localStorage.setItem('ims_token', accessToken)
               localStorage.setItem('access_token', accessToken)
             }
             return
@@ -208,7 +214,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(false)
     setIsInitialized(true)
     if (typeof window !== 'undefined') {
+      localStorage.setItem('ims_token', newToken)
       localStorage.setItem('access_token', newToken)
+      localStorage.setItem('ims_user', JSON.stringify(newUser))
       localStorage.setItem('auth_user', JSON.stringify(newUser))
     }
   }
@@ -222,13 +230,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lastFetchedTokenRef.current = null
       currentUserRef.current = null
       setAuthToken(null)
-      localStorage.removeItem('auth_user')
-      localStorage.removeItem('access_token')
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('ims_user')
+        localStorage.removeItem('auth_user')
+        localStorage.removeItem('ims_token')
+        localStorage.removeItem('access_token')
+      }
       setToken(null)
       setUser(null)
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login'
-      }
     }
   }
 

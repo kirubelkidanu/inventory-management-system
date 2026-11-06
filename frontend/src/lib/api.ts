@@ -14,15 +14,46 @@ export const api = axios.create({
   timeout: 120000,
 })
 
+export function getStoredToken(): string | null {
+  if (typeof window === 'undefined') return null
+
+  // 1. Explicit application token keys
+  const token = localStorage.getItem('ims_token') || localStorage.getItem('access_token')
+  if (token) return token
+
+  // 2. Supabase auth token session key in localStorage (e.g. sb-*-auth-token)
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        const item = localStorage.getItem(key)
+        if (item) {
+          const parsed = JSON.parse(item)
+          const sbToken = parsed?.access_token || parsed?.currentSession?.access_token
+          if (sbToken && typeof sbToken === 'string') {
+            return sbToken
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore JSON parse errors
+  }
+
+  return null
+}
+
 export const setAuthToken = (token: string | null) => {
   if (token) {
     api.defaults.headers.common['Authorization'] = `Bearer ${token}`
     if (typeof window !== 'undefined') {
+      localStorage.setItem('ims_token', token)
       localStorage.setItem('access_token', token)
     }
   } else {
     delete api.defaults.headers.common['Authorization']
     if (typeof window !== 'undefined') {
+      localStorage.removeItem('ims_token')
       localStorage.removeItem('access_token')
     }
   }
@@ -30,7 +61,7 @@ export const setAuthToken = (token: string | null) => {
 
 // Attach token on initialization if present in localStorage
 if (typeof window !== 'undefined') {
-  const existingToken = localStorage.getItem('access_token')
+  const existingToken = getStoredToken()
   if (existingToken) {
     api.defaults.headers.common['Authorization'] = `Bearer ${existingToken}`
   }
@@ -40,7 +71,7 @@ if (typeof window !== 'undefined') {
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     if (!config.headers.Authorization && typeof window !== 'undefined') {
-      const token = localStorage.getItem('access_token')
+      const token = getStoredToken()
       if (token) {
         config.headers.Authorization = `Bearer ${token}`
       }
@@ -56,23 +87,13 @@ api.interceptors.request.use(
   }
 )
 
-// Response Interceptor: Error normalization and protected route 401 handling
+// Response Interceptor: Safe error propagation without hard window.location reloads
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      const url = error.config?.url || ''
-      const isAuthEndpoint = url.includes('/auth/me') || url.includes('/auth/token')
-      const isLoginPage = typeof window !== 'undefined' && window.location.pathname === '/login'
-
-      // Only redirect on confirmed 401 when on a protected route and not during auth calls
-      if (typeof window !== 'undefined' && !isLoginPage && !isAuthEndpoint) {
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('auth_user')
-        delete api.defaults.headers.common['Authorization']
-        window.location.href = '/login'
-      }
-    }
+    // CRITICAL: A transient 401 or network error on a background query must NEVER
+    // nuke localStorage or trigger a hard window.location browser reload!
+    // Auth state lifecycle is strictly owned and managed by AuthContext.
     return Promise.reject(error)
   }
 )

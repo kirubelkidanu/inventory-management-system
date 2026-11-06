@@ -1,5 +1,6 @@
 """Application dependencies: database sessions, Supabase JWT authentication, and RBAC."""
 
+import hashlib
 import logging
 import sys
 import time
@@ -28,6 +29,48 @@ ROLES = {"ADMIN", "INVENTORY_MANAGER", "STORE_KEEPER", "VIEWER"}
 _JWKS_CACHE: Optional[dict] = None
 _JWKS_CACHE_TIME: float = 0.0
 JWKS_CACHE_TTL: float = 3600.0
+
+# Verified token TTL cache: token_hash -> (sub, email, role_claim, full_name, expires_at_monotonic)
+_VERIFIED_TOKEN_CACHE: dict[str, tuple[str, Optional[str], Optional[str], Optional[str], float]] = {}
+TOKEN_CACHE_TTL: float = 300.0  # 5 minutes
+
+
+def _get_token_cache(token: str) -> Optional[tuple[str, Optional[str], Optional[str], Optional[str]]]:
+    """Retrieves cached token identity if present and not expired."""
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    entry = _VERIFIED_TOKEN_CACHE.get(token_hash)
+    if entry:
+        sub, email, role_claim, full_name, expires_at = entry
+        if time.monotonic() < expires_at:
+            return sub, email, role_claim, full_name
+        else:
+            _VERIFIED_TOKEN_CACHE.pop(token_hash, None)
+    return None
+
+
+def _set_token_cache(
+    token: str,
+    sub: str,
+    email: Optional[str],
+    role_claim: Optional[str],
+    full_name: Optional[str],
+) -> None:
+    """Caches verified token identity for 300 seconds."""
+    now = time.monotonic()
+    if len(_VERIFIED_TOKEN_CACHE) > 500:
+        expired_keys = [k for k, v in _VERIFIED_TOKEN_CACHE.items() if now >= v[4]]
+        for k in expired_keys:
+            _VERIFIED_TOKEN_CACHE.pop(k, None)
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    _VERIFIED_TOKEN_CACHE[token_hash] = (sub, email, role_claim, full_name, now + TOKEN_CACHE_TTL)
+
+
+def clear_token_cache() -> None:
+    """Cleans all cached verified tokens (useful for testing or manual invalidation)."""
+    _VERIFIED_TOKEN_CACHE.clear()
+
+
 
 STATIC_SUPABASE_JWKS: dict = {
     "keys": [
@@ -88,7 +131,8 @@ async def get_current_user(
 ) -> User:
     """
     Validates Supabase Bearer JWT and retrieves active user profile from public.users.
-    Supports a 3-tier verification architecture:
+    Supports in-memory TTL caching and a 3-tier verification architecture:
+      0. In-memory verified token TTL cache (0ms for parallel concurrent queries)
       1. Direct Supabase Auth API verification endpoint (/auth/v1/user)
       2. Asymmetric ES256 (ECC P-256) signature verification via JWKS
       3. Local symmetric HS256 secret verification (test suite fallback)
@@ -109,59 +153,66 @@ async def get_current_user(
     full_name: Optional[str] = None
     verified = False
 
+    # Check in-memory verified token cache (resolves in 0ms for concurrent dashboard queries)
+    cached = _get_token_cache(token)
+    if cached is not None:
+        sub, email, role_claim, full_name = cached
+        verified = True
+
     tier1_err: Optional[str] = None
     tier2_err: Optional[str] = None
     tier3_err: Optional[str] = None
 
-    # Tier 1: Supabase Auth HTTP verification endpoint (/auth/v1/user)
-    supabase_url = str(settings.effective_supabase_url).rstrip("/")
-    verify_url = f"{supabase_url}/auth/v1/user"
-    anon_key = settings.effective_supabase_anon_key
+    if not verified:
+        # Tier 1: Supabase Auth HTTP verification endpoint (/auth/v1/user)
+        supabase_url = str(settings.effective_supabase_url).rstrip("/")
+        verify_url = f"{supabase_url}/auth/v1/user"
+        anon_key = settings.effective_supabase_anon_key
 
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                verify_url,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "apikey": anon_key,
-                },
-            )
-            if resp.status_code == 200:
-                user_data = resp.json()
-                sub = user_data.get("id")
-                email = user_data.get("email")
-                metadata = user_data.get("user_metadata") or {}
-                role_claim = metadata.get("role") or user_data.get("role")
-                full_name = metadata.get("full_name")
-                verified = True
-            else:
-                tier1_err = f"HTTP {resp.status_code}: {resp.text[:80]}"
-    except Exception as ex:
-        tier1_err = f"RequestError: {type(ex).__name__} ({str(ex)[:80]})"
-        if "certificate verify failed" in str(ex):
-            try:
-                async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
-                    resp = await client.get(
-                        verify_url,
-                        headers={
-                            "Authorization": f"Bearer {token}",
-                            "apikey": anon_key,
-                        },
-                    )
-                    if resp.status_code == 200:
-                        user_data = resp.json()
-                        sub = user_data.get("id")
-                        email = user_data.get("email")
-                        metadata = user_data.get("user_metadata") or {}
-                        role_claim = metadata.get("role") or user_data.get("role")
-                        full_name = metadata.get("full_name")
-                        verified = True
-                        tier1_err = None
-                    else:
-                        tier1_err = f"HTTP {resp.status_code}: {resp.text[:80]}"
-            except Exception as ex2:
-                tier1_err = f"SSLInsecureError: {type(ex2).__name__} ({str(ex2)[:80]})"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    verify_url,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "apikey": anon_key,
+                    },
+                )
+                if resp.status_code == 200:
+                    user_data = resp.json()
+                    sub = user_data.get("id")
+                    email = user_data.get("email")
+                    metadata = user_data.get("user_metadata") or {}
+                    role_claim = metadata.get("role") or user_data.get("role")
+                    full_name = metadata.get("full_name")
+                    verified = True
+                else:
+                    tier1_err = f"HTTP {resp.status_code}: {resp.text[:80]}"
+        except Exception as ex:
+            tier1_err = f"RequestError: {type(ex).__name__} ({str(ex)[:80]})"
+            if "certificate verify failed" in str(ex):
+                try:
+                    async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+                        resp = await client.get(
+                            verify_url,
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "apikey": anon_key,
+                            },
+                        )
+                        if resp.status_code == 200:
+                            user_data = resp.json()
+                            sub = user_data.get("id")
+                            email = user_data.get("email")
+                            metadata = user_data.get("user_metadata") or {}
+                            role_claim = metadata.get("role") or user_data.get("role")
+                            full_name = metadata.get("full_name")
+                            verified = True
+                            tier1_err = None
+                        else:
+                            tier1_err = f"HTTP {resp.status_code}: {resp.text[:80]}"
+                except Exception as ex2:
+                    tier1_err = f"SSLInsecureError: {type(ex2).__name__} ({str(ex2)[:80]})"
 
     # Tier 2: Supabase JWKS ES256 (ECC P-256) public key verification
     if not verified:
@@ -238,6 +289,9 @@ async def get_current_user(
             detail=f"Invalid or expired authentication token. {diagnostics}",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Cache verified token identity for 300 seconds
+    _set_token_cache(token, str(sub), email, role_claim, full_name)
 
     # Resolve the application user profile in PostgreSQL public.users
     sub_uuid: Optional[uuid.UUID] = None
