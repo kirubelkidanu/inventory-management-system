@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,43 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def sanitize_supabase_settings(self) -> "Settings":
+        """
+        Sanitizes Supabase configuration in production environments (e.g. Render)
+        where stale or placeholder environment variables may override defaults.
+        """
+        # 1. Sanitize SUPABASE_URL
+        url = str(self.SUPABASE_URL or "").strip()
+        if not url or "your-project" in url or "example" in url:
+            self.SUPABASE_URL = "https://kllunchfkzwhpiwhklzz.supabase.co"
+
+        # 2. Sanitize SUPABASE_ANON_KEY
+        anon = str(self.SUPABASE_ANON_KEY or "").strip()
+        if not anon or "placeholder" in anon or "your-" in anon:
+            self.SUPABASE_ANON_KEY = "sb_publishable_08sHZvm3HnDFO8hwh5mRog_Rbk_Z33Q"
+
+        # 3. Sanitize SUPABASE_KEY
+        key = str(self.SUPABASE_KEY or "").strip()
+        if not key or "placeholder" in key or "your-" in key or key == "public-anon-key":
+            self.SUPABASE_KEY = self.SUPABASE_ANON_KEY or "sb_publishable_08sHZvm3HnDFO8hwh5mRog_Rbk_Z33Q"
+
+        return self
+
+    @property
+    def effective_supabase_url(self) -> str:
+        url = str(self.SUPABASE_URL or "").strip()
+        if not url or "your-project" in url or "example" in url:
+            return "https://kllunchfkzwhpiwhklzz.supabase.co"
+        return url
+
+    @property
+    def effective_supabase_anon_key(self) -> str:
+        anon = str(self.SUPABASE_ANON_KEY or self.SUPABASE_KEY or "").strip()
+        if not anon or "placeholder" in anon or "your-" in anon:
+            return "sb_publishable_08sHZvm3HnDFO8hwh5mRog_Rbk_Z33Q"
+        return anon
 
     @property
     def async_database_url(self) -> str:

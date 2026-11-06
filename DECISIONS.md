@@ -142,3 +142,23 @@ Status: APPROVED
 3. Catalog Listing & Search:
    - GET /api/v1/items defaults to returning only active items (is_active = TRUE).
    - An explicit include_inactive=true query parameter exposes archived items for administrative audits and restoration.
+
+---
+
+## ADR-011 — Resilient 3-Tier JWT Authentication & User Provisioning
+
+Status: APPROVED
+
+1. Token Verification:
+   - Supabase Bearer JWT tokens are validated via a 3-tier architecture:
+     - Tier 1: Supabase Auth HTTP verification endpoint (`/auth/v1/user`) with environment-sanitized URL and publishable key.
+     - Tier 2: Asymmetric ES256 (ECC P-256) public key signature verification via Supabase JWKS (`/.well-known/jwks.json`), backed by an in-memory cache and static production fallback JWK.
+     - Tier 3: Local symmetric HS256 secret verification (test suite and local development).
+   - If all tiers fail, HTTP 401 returns detailed multi-tier diagnostic failure descriptions.
+
+2. User Profile Linking & Provisioning:
+   - When a valid Supabase token is authenticated:
+     1. Match `public.users.auth_user_id == UUID(sub)`.
+     2. Fallback: match `public.users.email ILIKE token.email` -> link `auth_user_id` and activate user.
+     3. Fallback: if the authenticated user is the project administrator (`sabelkidanu@gmail.com` or `d3a1107b-b5a6-45bc-bcb2-981feb537d06`), auto-provision an active `ADMIN` user record in `public.users`.
+

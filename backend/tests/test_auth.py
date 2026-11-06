@@ -322,3 +322,112 @@ async def test_get_current_user_auto_provisions_admin_sabelkidanu(monkeypatch):
     assert user.is_active is True
     mock_db.add.assert_called_once()
     mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_jwks_es256_verification(monkeypatch):
+    """Tests Tier 2 JWKS ES256 verification when Tier 1 HTTP check fails."""
+    from unittest.mock import AsyncMock, MagicMock
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    from fastapi.security import HTTPAuthorizationCredentials
+    from jose import jwk, jwt
+
+    # 1. Generate an EC key pair
+    priv = ec.generate_private_key(ec.SECP256R1())
+    priv_pem = priv.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    pub_jwk = jwk.construct(priv.public_key(), algorithm="ES256").to_dict()
+    pub_jwk["kid"] = "jwks-test-kid"
+
+    user_sub = uuid.uuid4()
+    es256_token = jwt.encode(
+        {
+            "sub": str(user_sub),
+            "email": "jwks_user@example.com",
+            "role": "ADMIN",
+            "full_name": "JWKS Admin",
+        },
+        priv_pem,
+        algorithm="ES256",
+        headers={"kid": "jwks-test-kid"},
+    )
+
+    # 2. Mock Tier 1 HTTP call to fail (e.g. 500 error)
+    mock_resp = httpx.Response(500, text="Internal Server Error")
+    monkeypatch.setattr(httpx.AsyncClient, "get", AsyncMock(return_value=mock_resp))
+
+    # 3. Mock get_supabase_jwks to return our test JWK
+    import app.dependencies as deps
+    monkeypatch.setattr(deps, "get_supabase_jwks", AsyncMock(return_value={"keys": [pub_jwk]}))
+
+    mock_db = AsyncMock()
+    existing_user = User(
+        id=user_sub,
+        auth_user_id=user_sub,
+        email="jwks_user@example.com",
+        full_name="JWKS Admin",
+        role="ADMIN",
+        is_active=True,
+    )
+    res_user = MagicMock()
+    res_user.scalar_one_or_none.return_value = existing_user
+    mock_db.execute = AsyncMock(return_value=res_user)
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=es256_token)
+    user = await get_current_user(credentials=creds, db=mock_db)
+
+    assert user.email == "jwks_user@example.com"
+    assert user.role == "ADMIN"
+    assert user.auth_user_id == user_sub
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_auto_provisions_admin_by_uuid(monkeypatch):
+    """Directly tests that get_current_user auto-provisions when sub is the production admin UUID."""
+    from unittest.mock import AsyncMock, MagicMock
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    admin_uuid = uuid.UUID("d3a1107b-b5a6-45bc-bcb2-981feb537d06")
+    mock_resp = httpx.Response(
+        200,
+        json={"id": str(admin_uuid), "email": "admin-alias@moderngebeya.com", "user_metadata": {}},
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "get", AsyncMock(return_value=mock_resp))
+
+    mock_db = AsyncMock()
+    res_none = MagicMock()
+    res_none.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(side_effect=[res_none, res_none])
+    mock_db.add = MagicMock()
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="supabase-admin-token")
+    user = await get_current_user(credentials=creds, db=mock_db)
+
+    assert user.role == "ADMIN"
+    assert user.auth_user_id == admin_uuid
+    assert user.is_active is True
+    mock_db.add.assert_called_once()
+    mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_all_tiers_failed_includes_diagnostics():
+    """Tests that when all token verification tiers fail, HTTP 401 includes diagnostic details."""
+    from fastapi import HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid-token-xyz")
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(credentials=creds, db=None)
+
+    assert exc_info.value.status_code == 401
+    assert "Diagnostics: [Tier 1" in exc_info.value.detail
+    assert "Tier 2" in exc_info.value.detail
+    assert "Tier 3" in exc_info.value.detail
+
