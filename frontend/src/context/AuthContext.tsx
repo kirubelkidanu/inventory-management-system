@@ -40,7 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               localStorage.setItem('auth_user', JSON.stringify(meRes.data))
             }
           } catch (profileErr) {
-            console.error('Failed to resolve active profile:', profileErr)
+            console.warn('[AuthContext] Failed to resolve active profile:', profileErr)
             if (isMounted) {
               setAuthToken(null)
               localStorage.removeItem('auth_user')
@@ -57,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } catch (err) {
-        console.error('Error during auth initialization:', err)
+        console.warn('[AuthContext] Error during auth initialization:', err)
       } finally {
         if (isMounted) {
           setIsLoading(false)
@@ -68,19 +68,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initializeAuth()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.access_token) {
-        const accessToken = session.access_token
-        setAuthToken(accessToken)
-        try {
-          const meRes = await api.get<User>('/auth/me', {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          })
-          if (isMounted) {
-            setToken(accessToken)
-            setUser(meRes.data)
-            localStorage.setItem('auth_user', JSON.stringify(meRes.data))
+      try {
+        if (session?.access_token) {
+          const accessToken = session.access_token
+          setAuthToken(accessToken)
+          try {
+            const meRes = await api.get<User>('/auth/me', {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            })
+            if (isMounted) {
+              setToken(accessToken)
+              setUser(meRes.data)
+              localStorage.setItem('auth_user', JSON.stringify(meRes.data))
+            }
+          } catch (profileErr) {
+            console.warn('[AuthContext] State change profile fetch failed:', profileErr)
+            if (isMounted) {
+              setAuthToken(null)
+              localStorage.removeItem('auth_user')
+              setToken(null)
+              setUser(null)
+            }
           }
-        } catch {
+        } else if (event === 'SIGNED_OUT' || !session) {
           if (isMounted) {
             setAuthToken(null)
             localStorage.removeItem('auth_user')
@@ -88,13 +98,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(null)
           }
         }
-      } else if (event === 'SIGNED_OUT' || !session) {
-        if (isMounted) {
-          setAuthToken(null)
-          localStorage.removeItem('auth_user')
-          setToken(null)
-          setUser(null)
-        }
+      } catch (authChangeErr) {
+        console.warn('[AuthContext] Unexpected auth state change error:', authChangeErr)
       }
     })
 
@@ -115,13 +120,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await supabase.auth.signOut()
     } catch (e) {
-      console.error('Error during signOut:', e)
+      console.warn('[AuthContext] Error during signOut:', e)
     } finally {
       setAuthToken(null)
       localStorage.removeItem('auth_user')
       setToken(null)
       setUser(null)
-      window.location.href = '/login'
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login'
+      }
     }
   }
 

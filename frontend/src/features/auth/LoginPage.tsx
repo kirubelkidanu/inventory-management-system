@@ -47,13 +47,26 @@ export const LoginPage: React.FC = () => {
   const onSubmit = async (data: LoginFormValues) => {
     setServerError(null)
     try {
-      const { data: authData, error } = await supabase.auth.signInWithPassword({
-        email: data.email.trim(),
-        password: data.password,
-      })
+      let authData: any = null
+      let authError: any = null
 
-      if (error || !authData.session) {
-        setServerError(error?.message || 'Invalid email or password')
+      try {
+        const res = await supabase.auth.signInWithPassword({
+          email: data.email.trim(),
+          password: data.password,
+        })
+        authData = res.data
+        authError = res.error
+      } catch (sbErr: any) {
+        authError = sbErr
+      }
+
+      if (authError || !authData?.session) {
+        const message =
+          authError?.message ||
+          authError?.error_description ||
+          'Invalid work email address or account password.'
+        setServerError(message)
         return
       }
 
@@ -68,10 +81,27 @@ export const LoginPage: React.FC = () => {
         const fromPath = (location.state as { from?: { pathname: string } })?.from?.pathname
         navigate(fromPath || '/dashboard', { replace: true })
       } catch (profileErr: any) {
-        await supabase.auth.signOut()
+        try {
+          await supabase.auth.signOut()
+        } catch {
+          // Ignore signOut failure
+        }
         setAuthToken(null)
+
+        const rawDetail =
+          profileErr?.response?.data?.detail ||
+          profileErr?.message ||
+          'Failed to authenticate. Please verify your credentials.'
+
+        const errorDetail =
+          typeof rawDetail === 'string'
+            ? rawDetail
+            : rawDetail
+            ? JSON.stringify(rawDetail)
+            : 'User account inactive or not provisioned in application directory.'
+
         if (
-          profileErr?.message?.includes('Network Error') ||
+          errorDetail.includes('Network Error') ||
           !profileErr?.response ||
           profileErr?.code === 'ERR_NETWORK'
         ) {
@@ -79,28 +109,27 @@ export const LoginPage: React.FC = () => {
             'Cannot reach backend service (https://api-inventory.moderngebeya.com). Check server connectivity or CORS settings.'
           )
         } else {
-          const errorDetail =
-            profileErr?.response?.data?.detail ||
-            profileErr?.message ||
-            'Failed to authenticate. Please verify your credentials.'
-          setServerError(typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail))
+          setServerError(errorDetail)
         }
       }
     } catch (err: any) {
+      const rawDetail =
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Authentication failed. Please verify your credentials.'
+
+      const errorDetail =
+        typeof rawDetail === 'string' ? rawDetail : JSON.stringify(rawDetail)
+
       if (
-        err?.message?.includes('Network Error') ||
-        (err && typeof err === 'object' && !('response' in err)) ||
+        errorDetail.includes('Network Error') ||
         err?.code === 'ERR_NETWORK'
       ) {
         setServerError(
           'Cannot reach backend service (https://api-inventory.moderngebeya.com). Check server connectivity or CORS settings.'
         )
       } else {
-        const errorDetail =
-          err?.response?.data?.detail ||
-          err?.message ||
-          'Failed to authenticate. Please verify your credentials.'
-        setServerError(typeof errorDetail === 'string' ? errorDetail : JSON.stringify(errorDetail))
+        setServerError(errorDetail)
       }
     }
   }

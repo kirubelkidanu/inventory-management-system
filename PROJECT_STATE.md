@@ -1199,5 +1199,37 @@ pm run build completed with 0 errors (1,701 modules transformed in 6.82s).
 - **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 1.70s; bundle hash `index-DRMxL1LM.js`).
 - **Security Check**: 0 private keys or backend service-role credentials exposed in client code (AGENTS.md Rules 5 & 6).
 
+---
+
+## 2026-11-06 — Direct Supabase Auth Token Verification, Admin Auto-Linking & Login Resiliency
+
+### 1. Architectural Scope & Implementation
+- **Backend Direct Supabase Auth Verification & User Linking (`backend/app/dependencies.py`)**:
+  * Supabase project signs tokens using ECC (P-256) / ES256 asymmetric keys.
+  * In `get_current_user`:
+    * Validates Bearer token format, raising HTTP 401 Unauthorized if missing.
+    * Calls official Supabase Auth user verification endpoint `GET {SUPABASE_URL}/auth/v1/user` with `Authorization: Bearer <token>` and `apikey: <SUPABASE_ANON_KEY>`.
+    * If Supabase returns HTTP 200: extracts user UUID (`id`) and `email`.
+    * If Supabase returns non-200: falls back to local decode or raises HTTP 401 Unauthorized (`{"detail": "Invalid or expired authentication token."}`).
+    * Resolves `public.users` profile:
+      1. First queries by `auth_user_id == UUID(supabase_user_id)`.
+      2. If not found, queries by `email ILIKE supabase_email`. If matched, links `user.auth_user_id = UUID(supabase_user_id)`, `user.is_active = TRUE`, and commits.
+      3. If still not found and email is `'sabelkidanu@gmail.com'`, auto-provisions `role = 'ADMIN'`, `full_name = 'Sabel Kidanu'`, `is_active = TRUE`, and commits.
+    * If user is missing or inactive, raises HTTP 401 Unauthorized (`{"detail": "User account inactive or not provisioned in application directory."}`).
+    * Returns authenticated `User` model.
+- **Frontend Login & Auth Hardening (`frontend/src/features/auth/LoginPage.tsx`, `frontend/src/context/AuthContext.tsx`)**:
+  * Wrapped login form submission and `/api/v1/auth/me` calls in resilient try/catch blocks that safely extract error details without assuming nested properties.
+  * Displays exact server error messages and prevents uncaught promise rejections from bubbling to browser extension hooks.
+  * Guarded Supabase `onAuthStateChange` listener to avoid unhandled async rejections.
+- **Test Suite Fixtures & Unit Tests (`backend/tests/conftest.py`, `backend/tests/test_auth.py`)**:
+  * Configured `test_get_current_user` dependency override on FastAPI `app` in `conftest.py` so unit, transaction, and report tests run 100% offline without HTTP delays.
+  * Added unit tests in `test_auth.py` verifying auto-linking by email and auto-provisioning for `'sabelkidanu@gmail.com'`.
+
+### 2. Verification & Quality Gates
+- **Backend Tests**: 284 passed in 47.56s across all 16 test modules (100% passing).
+- **Frontend Build**: `npm run build` (`tsc -b && vite build`) passed cleanly with 0 errors (1,763 modules transformed in 3.57s; bundle hash `index-NJ2txiWS.js`).
+- **Security Check**: Verified 0 exposed credentials or private keys in git (AGENTS.md Rules 5 & 6).
+
+
 
 

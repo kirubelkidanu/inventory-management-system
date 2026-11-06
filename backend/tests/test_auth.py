@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import Depends, FastAPI
-from httpx import ASGITransport, AsyncClient
+import httpx
+from httpx import ASGITransport, AsyncClient, Response
 from jose import jwt
 
 from app.core.config import settings
@@ -247,3 +248,77 @@ async def test_auth_me_with_supabase_ecc_token_not_provisioned_in_db_returns_401
 
     assert response.status_code == 401
     assert "not provisioned" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_auto_links_user_by_email(monkeypatch):
+    """Directly tests that get_current_user auto-links an existing user profile when email matches."""
+    from unittest.mock import AsyncMock, MagicMock
+    from fastapi.security import HTTPAuthorizationCredentials
+    from httpx import Response
+
+    new_sub = uuid.uuid4()
+    mock_resp = Response(
+        200,
+        json={"id": str(new_sub), "email": "manager@ims.local", "user_metadata": {}},
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "get", AsyncMock(return_value=mock_resp))
+
+    mock_db = AsyncMock()
+    existing_user = User(
+        id=uuid.uuid4(),
+        auth_user_id=uuid.uuid4(),
+        email="manager@ims.local",
+        full_name="Existing Manager",
+        role="INVENTORY_MANAGER",
+        is_active=False,
+    )
+    res_none = MagicMock()
+    res_none.scalar_one_or_none.return_value = None
+    res_user = MagicMock()
+    res_user.scalar_one_or_none.return_value = existing_user
+
+    mock_db.execute = AsyncMock(side_effect=[res_none, res_user])
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="supabase-test-token")
+    user = await get_current_user(credentials=creds, db=mock_db)
+
+    assert user.auth_user_id == new_sub
+    assert user.is_active is True
+    mock_db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_auto_provisions_admin_sabelkidanu(monkeypatch):
+    """Directly tests that get_current_user auto-provisions sabelkidanu@gmail.com as ADMIN."""
+    from unittest.mock import AsyncMock, MagicMock
+    from fastapi.security import HTTPAuthorizationCredentials
+    from httpx import Response
+
+    new_sub = uuid.uuid4()
+    mock_resp = Response(
+        200,
+        json={"id": str(new_sub), "email": "sabelkidanu@gmail.com", "user_metadata": {}},
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "get", AsyncMock(return_value=mock_resp))
+
+    mock_db = AsyncMock()
+    res_none = MagicMock()
+    res_none.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(side_effect=[res_none, res_none])
+    mock_db.add = MagicMock()
+    mock_db.commit = AsyncMock()
+    mock_db.refresh = AsyncMock()
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="supabase-test-token")
+    user = await get_current_user(credentials=creds, db=mock_db)
+
+    assert user.email == "sabelkidanu@gmail.com"
+    assert user.role == "ADMIN"
+    assert user.full_name == "Sabel Kidanu"
+    assert user.auth_user_id == new_sub
+    assert user.is_active is True
+    mock_db.add.assert_called_once()
+    mock_db.commit.assert_awaited_once()

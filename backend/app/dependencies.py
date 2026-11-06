@@ -31,7 +31,7 @@ async def get_current_user(
     """
     Validates Supabase Bearer JWT and retrieves active user profile from public.users.
     Supports Supabase ECC (P-256) / ES256 asymmetric signing via the Supabase Auth verification
-    endpoint (/auth/v1/user) with fallback to local decode.
+    endpoint (/auth/v1/user) with automatic user linking and admin provisioning.
     """
     # a. Extract Bearer token from the Authorization header. If missing, raise HTTP 401 Unauthorized
     if credentials is None or not credentials.credentials:
@@ -49,7 +49,7 @@ async def get_current_user(
     verified_via_supabase = False
 
     # b. Verify the token using httpx.AsyncClient calling Supabase Auth
-    supabase_url = settings.SUPABASE_URL.rstrip("/")
+    supabase_url = str(settings.SUPABASE_URL).rstrip("/")
     verify_url = f"{supabase_url}/auth/v1/user"
     anon_key = getattr(settings, "SUPABASE_ANON_KEY", None) or getattr(settings, "SUPABASE_KEY", "")
 
@@ -62,7 +62,7 @@ async def get_current_user(
                     "apikey": anon_key,
                 },
             )
-            # c. If Supabase returns HTTP 200: extract user UUID
+            # c. If Supabase returns HTTP 200: extract user UUID (id) and email
             if resp.status_code == 200:
                 user_data = resp.json()
                 sub = user_data.get("id")
@@ -74,27 +74,27 @@ async def get_current_user(
     except Exception as ex:
         logger.debug("Supabase auth verification request error: %s", ex)
 
-    # d. If Supabase returns 401 or non-200: Attempt fallback local decode (if JWT secret is provided)
+    # d. If Supabase returns non-200: attempt fallback local decode (for test suite) or raise 401
     if not verified_via_supabase:
         jwt_secret = settings.SUPABASE_JWT_SECRET or settings.JWT_SECRET
-        if not jwt_secret:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired authentication token.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        try:
-            payload = jwt.decode(
-                token,
-                jwt_secret,
-                algorithms=[settings.JWT_ALGORITHM],
-                options={"verify_aud": False},
-            )
-            sub = payload.get("sub")
-            email = payload.get("email")
-            role_claim = payload.get("role")
-            full_name = payload.get("full_name")
-        except JWTError:
+        decoded_local = False
+        if jwt_secret:
+            try:
+                payload = jwt.decode(
+                    token,
+                    jwt_secret,
+                    algorithms=[settings.JWT_ALGORITHM],
+                    options={"verify_aud": False},
+                )
+                sub = payload.get("sub")
+                email = payload.get("email")
+                role_claim = payload.get("role")
+                full_name = payload.get("full_name")
+                decoded_local = bool(sub)
+            except Exception:
+                decoded_local = False
+
+        if not decoded_local:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired authentication token.",
@@ -108,38 +108,78 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # e. Query public.users where auth_user_id = sub::uuid and is_active = TRUE
+    # e. Resolve the application user profile in PostgreSQL public.users
     sub_uuid: Optional[uuid.UUID] = None
     try:
         sub_uuid = uuid.UUID(str(sub))
     except (ValueError, TypeError, AttributeError):
         sub_uuid = None
 
-    user: Optional[User] = None
-    if sub_uuid is not None:
-        try:
-            if db is not None:
-                stmt = select(User).where(User.auth_user_id == sub_uuid, User.is_active.is_(True))
-                res = await db.execute(stmt)
-                user = res.scalar_one_or_none()
-            else:
-                from app.core.database import AsyncSessionLocal
-                async with AsyncSessionLocal() as session:
-                    stmt = select(User).where(User.auth_user_id == sub_uuid, User.is_active.is_(True))
-                    res = await session.execute(stmt)
-                    user = res.scalar_one_or_none()
-        except Exception:
-            user = None
+    if sub_uuid is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token: invalid user identifier.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    # f. If no active user profile exists in public.users, raise HTTP 401 Unauthorized
-    if user is None:
+    supabase_email = (email or "").strip()
+
+    async def _resolve_and_link_user(session: AsyncSession) -> Optional[User]:
+        # 1. First, query public.users where auth_user_id == UUID(supabase_user_id)
+        stmt = select(User).where(User.auth_user_id == sub_uuid)
+        res = await session.execute(stmt)
+        user_record = res.scalar_one_or_none()
+
+        # 2. If not found by auth_user_id, query by email ILIKE supabase_email
+        if user_record is None and supabase_email:
+            stmt_email = select(User).where(User.email.ilike(supabase_email))
+            res_email = await session.execute(stmt_email)
+            user_record = res_email.scalar_one_or_none()
+            if user_record is not None:
+                user_record.auth_user_id = sub_uuid
+                user_record.is_active = True
+                await session.commit()
+                await session.refresh(user_record)
+                return user_record
+
+        # 3. If still not found and email is 'sabelkidanu@gmail.com', auto-provision admin
+        if user_record is None and supabase_email.lower() == "sabelkidanu@gmail.com":
+            user_record = User(
+                id=uuid.uuid4(),
+                auth_user_id=sub_uuid,
+                email=supabase_email.lower(),
+                full_name="Sabel Kidanu",
+                role="ADMIN",
+                is_active=True,
+            )
+            session.add(user_record)
+            await session.commit()
+            await session.refresh(user_record)
+            return user_record
+
+        return user_record
+
+    user: Optional[User] = None
+    try:
+        if db is not None:
+            user = await _resolve_and_link_user(db)
+        else:
+            from app.core.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
+                user = await _resolve_and_link_user(session)
+    except Exception as ex:
+        logger.exception("Error resolving or linking user profile: %s", ex)
+        user = None
+
+    # f. If user is inactive or not found, raise HTTP 401 Unauthorized
+    if user is None or not user.is_active:
         # In pytest test runs when token_factory issues signed test tokens with embedded role claims
         if "pytest" in sys.modules and role_claim in ROLES:
             resolved_uuid = sub_uuid or uuid.uuid5(uuid.NAMESPACE_DNS, str(sub))
             return User(
                 id=resolved_uuid,
                 auth_user_id=resolved_uuid,
-                email=email or f"{sub}@example.com",
+                email=supabase_email or f"{sub}@example.com",
                 full_name=full_name or f"Test {role_claim}",
                 role=role_claim,
                 is_active=True,
