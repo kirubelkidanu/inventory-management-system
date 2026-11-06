@@ -1,5 +1,4 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
-import { supabase } from '@/lib/supabase'
 
 const rawBaseUrl =
   import.meta.env.VITE_API_URL ||
@@ -18,14 +17,18 @@ export const api = axios.create({
 export const setAuthToken = (token: string | null) => {
   if (token) {
     api.defaults.headers.common['Authorization'] = `Bearer ${token}`
-    localStorage.setItem('access_token', token)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('access_token', token)
+    }
   } else {
     delete api.defaults.headers.common['Authorization']
-    localStorage.removeItem('access_token')
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('access_token')
+    }
   }
 }
 
-// Attach token on initialization if present
+// Attach token on initialization if present in localStorage
 if (typeof window !== 'undefined') {
   const existingToken = localStorage.getItem('access_token')
   if (existingToken) {
@@ -33,23 +36,14 @@ if (typeof window !== 'undefined') {
   }
 }
 
-// Request Interceptor: Attach JWT Bearer Token from active Supabase session or localStorage and sanitize URLs
+// Request Interceptor: Synchronously attach JWT Bearer Token if absent and sanitize URLs
 api.interceptors.request.use(
-  async (config: InternalAxiosRequestConfig) => {
-    let token = localStorage.getItem('access_token')
-    if (!token && typeof window !== 'undefined') {
-      try {
-        const { data } = await supabase.auth.getSession()
-        token = data.session?.access_token || null
-        if (token) {
-          localStorage.setItem('access_token', token)
-        }
-      } catch {
-        // Fallback silently if session cannot be retrieved
+  (config: InternalAxiosRequestConfig) => {
+    if (!config.headers.Authorization && typeof window !== 'undefined') {
+      const token = localStorage.getItem('access_token')
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
       }
-    }
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`
     }
     if (config.url) {
       // Prevent unintended double slashes (e.g. //opening-balance -> /opening-balance)
@@ -62,16 +56,17 @@ api.interceptors.request.use(
   }
 )
 
-// Response Interceptor: Error normalization and 401 handling
+// Response Interceptor: Error normalization and protected route 401 handling
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      const isAuthEndpoint =
-        error.config?.url?.includes('/auth/me') ||
-        error.config?.url?.includes('/auth/token')
-      // Clear token on 401 unauthorized only when navigating protected routes
-      if (typeof window !== 'undefined' && window.location.pathname !== '/login' && !isAuthEndpoint) {
+      const url = error.config?.url || ''
+      const isAuthEndpoint = url.includes('/auth/me') || url.includes('/auth/token')
+      const isLoginPage = typeof window !== 'undefined' && window.location.pathname === '/login'
+
+      // Only redirect on confirmed 401 when on a protected route and not during auth calls
+      if (typeof window !== 'undefined' && !isLoginPage && !isAuthEndpoint) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('auth_user')
         delete api.defaults.headers.common['Authorization']

@@ -89,7 +89,7 @@ export const AppLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const navigate = useNavigate()
 
-  if (isLoading) {
+  if (isLoading && !user) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-slate-900">
         <div className="flex flex-col items-center gap-3">
@@ -100,7 +100,7 @@ export const AppLayout: React.FC = () => {
     )
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !user) {
     return <Navigate to="/login" replace />
   }
 

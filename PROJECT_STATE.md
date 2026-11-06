@@ -2,6 +2,12 @@
 
 Production Authentication & Asymmetric ES256 / JWKS Supabase Auth Hardened
 
+- Stabilized AuthContext state management and ProtectedRoute rendering to eliminate infinite initializing loop:
+  * isLoading only true during cold boot; never toggled back to true on background events
+  * Profile fetches to /auth/me deduplicated via lastFetchedTokenRef and isFetchingRef
+  * ProtectedRoute and AppLayout only show loading spinner when isLoading && !user
+  * Axios request interceptor reads tokens synchronously without triggering nested getSession() calls
+
 ## Project Status
 
 The official 13 client project sites and corresponding warehouse bin locations have been fully seeded and integrated. Placeholder records (`WH001`, `WH002`, `PRJ-KZ-01`) have been safely archived without violating ledger immutability (`is_active = FALSE`, marked `[Archived]`). Full dynamic site and warehouse bin management has been implemented across the backend API, repositories, services, and frontend administration screens (`/warehouses` and `/projects`).

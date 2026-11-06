@@ -4,9 +4,10 @@ import { useAuth } from '@/context/AuthContext'
 import { Boxes } from 'lucide-react'
 
 export const AuthLayout: React.FC = () => {
-  const { isAuthenticated, isLoading } = useAuth()
+  const { user, isAuthenticated, isLoading } = useAuth()
 
-  if (isLoading) {
+  // Only render the full-screen spinner on initial cold boot when loading AND user is null
+  if (isLoading && !user) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-slate-900">
         <div className="flex flex-col items-center gap-3">
@@ -17,7 +18,8 @@ export const AuthLayout: React.FC = () => {
     )
   }
 
-  if (isAuthenticated) {
+  // If already authenticated, redirect to root dashboard
+  if (isAuthenticated || user) {
     return <Navigate to="/" replace />
   }
 
