@@ -27,6 +27,7 @@ _bearer = HTTPBearer(auto_error=False)
 async def get_current_user_dep(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Authentication dependency compatible with both production JWT auth and test mocks."""
     dep = getattr(dependencies, "get_current_user", None)
@@ -36,12 +37,13 @@ async def get_current_user_dep(
             return await res
         return res
 
-    if credentials is None:
-        return None
-    try:
-        return await auth_get_current_user(credentials)
-    except HTTPException:
-        return None
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await auth_get_current_user(credentials=credentials, db=db)
 
 
 @router.get("/balances", response_model=List[InventoryBalanceRead])

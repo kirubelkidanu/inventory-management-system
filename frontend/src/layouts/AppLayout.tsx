@@ -100,7 +100,7 @@ export const AppLayout: React.FC = () => {
     )
   }
 
-  if (!isAuthenticated && !user) {
+  if (!user || !isAuthenticated) {
     return <Navigate to="/login" replace />
   }
 

@@ -19,7 +19,7 @@ export const ProtectedRoute: React.FC = () => {
   }
 
   // If initial load finished and there is no authenticated user, redirect cleanly to login
-  if (!isAuthenticated && !user) {
+  if (!user || !isAuthenticated) {
     // Preserve attempted location so user can be redirected after login
     return <Navigate to="/login" state={{ from: location }} replace />
   }

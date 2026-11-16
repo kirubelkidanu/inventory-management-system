@@ -1,6 +1,14 @@
 ## Current Phase
 
-Production Authentication & Asymmetric ES256 / JWKS Supabase Auth Hardened
+Strict Authentication & Zero Dev Bypass Hardened
+
+- Strict Unauthenticated Access Prevention:
+  * Seeded initial `user` and `token` states as strictly `null` in `AuthContext.tsx` until validated against active Supabase session and `GET /api/v1/auth/me`.
+  * If `/api/v1/auth/me` fails or session is null, strictly wipes state and localStorage keys (`ims_user`, `ims_token`, `auth_user`, `access_token`).
+  * Hardened `ProtectedRoute.tsx` and `AppLayout.tsx` to redirect immediately to `/login` if `!user || !isAuthenticated`.
+  * Standardized `get_current_user_dep` in `backend/app/api/routes/inventory.py` to raise HTTP 401 Unauthorized directly when credentials are missing or invalid.
+  * Added automated security test `test_unauthenticated_requests_to_protected_endpoints_return_401` in `backend/tests/test_auth.py` verifying that unauthenticated requests to `/auth/me`, `/items`, `/inventory/balances`, `/warehouses`, `/projects`, `/transactions`, and `/reports/trial-balance` return HTTP 401 Unauthorized.
+  * Zero dev accounts or hardcoded bypasses exist across all protected routes.
 
 - Fixed 2-3s dashboard reload loop and verified token latency:
   * Eliminated window.location.href hard reloads from Axios response interceptor

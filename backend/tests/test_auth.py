@@ -474,3 +474,25 @@ async def test_get_current_user_verified_token_cache(monkeypatch):
     assert mock_get.call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_unauthenticated_requests_to_protected_endpoints_return_401():
+    """Verify that unauthenticated requests without Bearer tokens to protected API endpoints return 401."""
+    protected_endpoints = [
+        "/api/v1/auth/me",
+        "/api/v1/items",
+        "/api/v1/inventory/balances",
+        "/api/v1/warehouses",
+        "/api/v1/projects",
+        "/api/v1/transactions",
+        "/api/v1/reports/trial-balance",
+    ]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for endpoint in protected_endpoints:
+            response = await client.get(endpoint)
+            assert response.status_code == 401, f"Expected 401 for unauthenticated GET {endpoint}, got {response.status_code}"
+            data = response.json()
+            assert "detail" in data
+            assert "not authenticated" in data["detail"].lower() or "invalid" in data["detail"].lower()
+
+
+

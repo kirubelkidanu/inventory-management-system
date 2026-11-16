@@ -358,7 +358,7 @@ async def get_current_user(
 
     user: Optional[User] = None
     try:
-        if db is not None:
+        if db is not None and hasattr(db, "execute"):
             user = await _resolve_and_link_user(db)
         else:
             from app.core.database import AsyncSessionLocal

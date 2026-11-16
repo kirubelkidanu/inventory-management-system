@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react'
 import type { User, UserRole } from '@/types'
 import { supabase } from '@/lib/supabase'
-import { api, setAuthToken, getStoredToken } from '@/lib/api'
+import { api, setAuthToken } from '@/lib/api'
 
 interface AuthContextType {
   user: User | null
@@ -17,31 +17,18 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Synchronously seed initial state from localStorage so page refreshes never flash unauthenticated
-  const [token, setToken] = useState<string | null>(() => {
-    return getStoredToken()
-  })
-
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('ims_user') || localStorage.getItem('auth_user')
-        return stored ? JSON.parse(stored) : null
-      } catch {
-        return null
-      }
-    }
-    return null
-  })
+  // Initial user state is strictly null until validated against real active Supabase session + /api/v1/auth/me
+  const [token, setToken] = useState<string | null>(null)
+  const [user, setUser] = useState<User | null>(null)
 
   // isLoading starts true on initial mount and permanently transitions to false once checked
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [isInitialized, setIsInitialized] = useState<boolean>(false)
 
   // Refs for deduplication and race-prevention
-  const lastFetchedTokenRef = useRef<string | null>(token)
+  const lastFetchedTokenRef = useRef<string | null>(null)
   const isFetchingRef = useRef<boolean>(false)
-  const currentUserRef = useRef<User | null>(user)
+  const currentUserRef = useRef<User | null>(null)
 
   // Keep currentUserRef synchronized with state
   useEffect(() => {
@@ -81,20 +68,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return profile
     } catch (err: any) {
       console.warn('[AuthContext] Profile fetch error:', err)
-      const status = err?.response?.status
-      // Only clear user on confirmed 401 unauthorized if there is no user profile loaded
-      if (status === 401 && !currentUserRef.current) {
-        lastFetchedTokenRef.current = null
-        currentUserRef.current = null
-        setUser(null)
-        setToken(null)
-        setAuthToken(null)
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('ims_user')
-          localStorage.removeItem('auth_user')
-          localStorage.removeItem('ims_token')
-          localStorage.removeItem('access_token')
-        }
+      // If /auth/me fails (401 or invalid token), strictly clear user and auth tokens
+      lastFetchedTokenRef.current = null
+      currentUserRef.current = null
+      setUser(null)
+      setToken(null)
+      setAuthToken(null)
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('ims_user')
+        localStorage.removeItem('auth_user')
+        localStorage.removeItem('ims_token')
+        localStorage.removeItem('access_token')
       }
       return null
     } finally {
@@ -111,8 +95,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (session?.access_token) {
           await fetchUserProfile(session.access_token)
         } else {
-          // No active Supabase session: only clear if there is no existing cached user
-          if (isMounted && !currentUserRef.current) {
+          // No active Supabase session: strictly ensure clean null state
+          if (isMounted) {
             lastFetchedTokenRef.current = null
             currentUserRef.current = null
             setToken(null)
@@ -128,6 +112,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (err) {
         console.warn('[AuthContext] Error during auth initialization:', err)
+        if (isMounted) {
+          lastFetchedTokenRef.current = null
+          currentUserRef.current = null
+          setToken(null)
+          setUser(null)
+          setAuthToken(null)
+        }
       } finally {
         if (isMounted) {
           setIsLoading(false)
