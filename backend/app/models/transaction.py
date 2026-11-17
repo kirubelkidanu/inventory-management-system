@@ -2,7 +2,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import String, Text, Date, DateTime, Numeric, Integer, ForeignKey, UniqueConstraint, func
+from sqlalchemy import Boolean, String, Text, Date, DateTime, Numeric, Integer, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base
 
@@ -67,9 +67,14 @@ class TransactionLine(Base):
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_voided: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    voided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    void_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     transaction = relationship("Transaction", back_populates="lines")
     item = relationship("Item")
+    voided_by_user = relationship("User", foreign_keys=[voided_by])
 
 
 class StockMovement(Base):

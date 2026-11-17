@@ -162,3 +162,26 @@ Status: APPROVED
      2. Fallback: match `public.users.email ILIKE token.email` -> link `auth_user_id` and activate user.
      3. Fallback: if the authenticated user is the project administrator (`sabelkidanu@gmail.com` or `d3a1107b-b5a6-45bc-bcb2-981feb537d06`), auto-provision an active `ADMIN` user record in `public.users`.
 
+---
+
+## ADR-009 — Single-Line Reversal (Compensating Ledger Pattern)
+
+Status: APPROVED
+
+1. Ledger Immutability & Reversal Semantics:
+   - Individual lines on posted transactions (`GRV`, `SIV`, `ISTV`, `ISTRV`, `SRV`, `ADJUSTMENT`) are never physically deleted (`DELETE` is strictly prohibited on posted records and `stock_movements`).
+   - Authorized roles (`ADMIN`, `INVENTORY_MANAGER`) may void/reverse a specific line on a posted transaction by providing a mandatory cancellation reason (minimum 3 characters).
+   - `TransactionService` executes the reversal atomically inside a single PostgreSQL transaction:
+     - Marks the `transaction_line` as voided with actor/timestamp/reason metadata (`is_voided = TRUE`, `voided_by`, `voided_at`, `void_reason`).
+     - Locks `(warehouse_id, item_id)` via `SELECT ... FOR UPDATE` to guarantee deterministic concurrency.
+     - Writes a compensating `IN` or `OUT` entry into `stock_movements` (never mutating historical movement rows).
+     - Updates `inventory_balances.quantity_on_hand`.
+     - Reconciles `transfer_lines` and `transfer_records` for `ISTV` lines.
+     - Records an entry in `audit_logs` (`action = 'CANCEL'`, `entity_type = 'transaction_line'`).
+
+2. Invariant & Negative Stock Guardrails:
+   - For `ISTV` lines, voiding is strictly blocked if any quantity on that line has already been received via an `ISTRV` (`received_quantity > 0`), preventing negative or inconsistent in-transit balances.
+   - For inbound lines (`GRV`, `ISTRV`, `SRV`, or positive `ADJUSTMENT`), voiding is strictly blocked if reversing the inbound stock would push `inventory_balances.quantity_on_hand` below zero (available stock check).
+   - If all lines on a transaction become `is_voided == TRUE`, the parent transaction status transitions to `CANCELLED` (`cancelled_by`, `cancelled_at`, `cancellation_reason`).
+
+

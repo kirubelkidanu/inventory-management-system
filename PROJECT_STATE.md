@@ -1,6 +1,31 @@
 ## Current Phase
 
-Strict Authentication & Zero Dev Bypass Hardened
+Atomic Single-Line Compensating Ledger Reversal (ADR-009) & Strict Authentication Complete
+
+- Single-Line Reversal (Compensating Ledger Reversal Pattern, ADR-009):
+  * Schema Migration: Created and executed `database/migrations/006_add_transaction_line_void_tracking.sql` on live Supabase PostgreSQL. Added `is_voided`, `voided_by`, `voided_at`, `void_reason` to `transaction_lines` with check constraint `chk_tx_line_void_reason`.
+  * Service Layer (`TransactionService.void_transaction_line`):
+    - Strict role authorization (`ADMIN`, `INVENTORY_MANAGER`).
+    - Enforces row locking (`FOR UPDATE`) on transaction, transaction lines, transfer lines, and inventory balances.
+    - Emits atomic compensating ledger movements (`IN` / `OUT`) in `stock_movements` with descriptive remarks (`Void Line reversal...`).
+    - Adjusts `inventory_balances` atomically, guarding against negative on-hand balance.
+    - Handles voucher type specifics:
+      * `GRV` / `SRV`: Reverses received inventory (`OUT`).
+      * `SIV`: Reverses issued inventory (`IN`).
+      * `ISTV`: Restores source warehouse balance (`IN`), decrements in-transit balance (`OUT`), decrements `TransferLine.quantity_sent` and `TransferRecord.total_items_sent`, removing in-transit transfer lines if unsent. Blocks voiding if quantity has already been partially or fully received at destination.
+      * `ISTRV`: Reverses received destination stock (`OUT`), restores source transfer in-transit quantity (`IN`), decrements `TransferLine.quantity_received` and `TransferRecord.total_items_received`.
+      * `ADJUSTMENT`: Reverses adjustment direction (`IN` -> `OUT`, `OUT` -> `IN`).
+    - Automatically updates parent transaction voucher status to `CANCELLED` when all lines on the transaction are voided.
+    - Writes immutable audit trail entry (`audit_logs`) with `action = 'CANCEL'`, details of line id, item code, warehouse, and mandatory cancellation reason.
+  * API Layer: Added `POST /api/v1/transactions/{transaction_id}/lines/{line_id}/void` protected by JWT authentication and role authorization (`ADMIN`, `INVENTORY_MANAGER`).
+  * Frontend UI:
+    - Updated `TransactionDetailPage.tsx`, `TransactionsListPage.tsx`, and `TrialBalancePage.tsx` with `ACTIVE` vs `VOIDED` line status badges.
+    - Added "Void Line" action button visible for authorized roles (`ADMIN`, `INVENTORY_MANAGER`) on non-voided lines of posted transactions.
+    - Built `VoidLineModal.tsx` modal dialog requiring a non-empty audit reason with user confirmation, toast notifications, and automatic query cache invalidation.
+  * Testing & Verification:
+    - Added dedicated test suite `backend/tests/test_line_reversal.py` covering all 8 core reversal behaviors and permission boundaries.
+    - Full test suite passes: **297 tests passed** across 16 test modules (100% pass rate).
+    - Frontend production bundle built with 0 errors via Vite.
 
 - Strict Unauthenticated Access Prevention:
   * Seeded initial `user` and `token` states as strictly `null` in `AuthContext.tsx` until validated against active Supabase session and `GET /api/v1/auth/me`.
@@ -25,7 +50,7 @@ Strict Authentication & Zero Dev Bypass Hardened
 ## Project Status
 
 The official 13 client project sites and corresponding warehouse bin locations have been fully seeded and integrated. Placeholder records (`WH001`, `WH002`, `PRJ-KZ-01`) have been safely archived without violating ledger immutability (`is_active = FALSE`, marked `[Archived]`). Full dynamic site and warehouse bin management has been implemented across the backend API, repositories, services, and frontend administration screens (`/warehouses` and `/projects`).
-The entire backend and frontend enterprise inventory management platform is fully configured, secured, verified, seeded with live production master data and opening stock balances in Supabase PostgreSQL, and passes **220 tests** across 15 test modules with clean client production packaging.
+The entire backend and frontend enterprise inventory management platform is fully configured, secured, verified, seeded with live production master data and opening stock balances in Supabase PostgreSQL, and passes **297 tests** across 16 test modules with clean client production packaging.
 Environment variable templates (`backend/.env.example`, `frontend/.env.example`, and root `.env.example`) strictly segregate server-side secrets from client-safe variables with zero committed credentials. Security middleware (`CORSMiddleware`), JWT authentication routes (`/api/v1/auth/token`, `/api/v1/auth/demo-login`, `/api/v1/auth/me`), and database stack trace sanitization are active in `backend/app/main.py`. The live PostgreSQL database is verified end-to-end with zero reconciliation discrepancies (`vw_reconciliation_discrepancies` == 0), dual-write balance/ledger immutability, in-transit transfer tracking, and authoritative Trial Balance reporting.
 
 ## Database Status
@@ -35,6 +60,7 @@ Migrations:
 - database/migrations/002_expand_audit_log_actions.sql (EXECUTED SUCCESSFULLY)
 - database/migrations/003_seed_official_sites_and_warehouses.sql (EXECUTED SUCCESSFULLY)
 - database/migrations/004_add_unit_price_support.sql (EXECUTED SUCCESSFULLY)
+- database/migrations/006_add_transaction_line_void_tracking.sql (EXECUTED SUCCESSFULLY)
 
 Database foundation & Seeded Data:
 - 14 tables created & 1 view active

@@ -17,16 +17,21 @@ import {
   MapPin,
   Clock,
   User,
+  Ban,
 } from 'lucide-react'
+import { useAuth } from '@/context/AuthContext'
 import { useWarehouses } from '@/features/inventory/useInventoryData'
 import { useTransactions } from './useTransactionData'
-import type { Transaction } from '@/types'
+import { VoidLineModal } from './components/VoidLineModal'
+import type { Transaction, TransactionLine } from '@/types'
 
 export const TransactionsListPage: React.FC = () => {
+  const { hasRole } = useAuth()
   const [filterType, setFilterType] = useState('ALL')
   const [warehouseId, setWarehouseId] = useState('')
   const [search, setSearch] = useState('')
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null)
+  const [voidingLine, setVoidingLine] = useState<TransactionLine | null>(null)
 
   const { data: warehouses = [] } = useWarehouses()
   const {
@@ -421,7 +426,11 @@ export const TransactionsListPage: React.FC = () => {
                           <th className="py-2.5 px-3 text-right">Total Price (ETB)</th>
                         </>
                       )}
+                      <th className="py-2.5 px-3">Status</th>
                       <th className="py-2.5 px-3">Line Remarks</th>
+                      {hasRole('ADMIN', 'INVENTORY_MANAGER') && ['POSTED', 'PARTIALLY_RECEIVED', 'COMPLETED'].includes(selectedTx?.status?.toUpperCase() || '') && (
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -431,12 +440,13 @@ export const TransactionsListPage: React.FC = () => {
                         const price = l.unit_price !== undefined && l.unit_price !== null ? Number(l.unit_price) : 0
                         const lineTotal = l.total_price !== undefined && l.total_price !== null ? Number(l.total_price) : qty * price
                         const showPrices = selectedTx.transaction_type === 'GRV' || (selectedTx.lines || []).some((item) => item.unit_price !== undefined && item.unit_price !== null)
+                        const canVoidLine = hasRole('ADMIN', 'INVENTORY_MANAGER') && ['POSTED', 'PARTIALLY_RECEIVED', 'COMPLETED'].includes(selectedTx?.status?.toUpperCase() || '')
 
                         return (
-                          <tr key={l.id || idx}>
+                          <tr key={l.id || idx} className={l.is_voided ? 'bg-rose-50/40 text-slate-400' : ''}>
                             <td className="py-2 px-3 font-mono text-slate-400">{l.line_number || idx + 1}</td>
                             <td className="py-2 px-3 font-mono font-medium text-slate-800">{l.item_id}</td>
-                            <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                            <td className={`py-2 px-3 text-right font-mono font-bold ${l.is_voided ? 'line-through text-slate-400' : 'text-slate-900'}`}>
                               {qty.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="py-2 px-3 font-mono text-slate-600">{l.unit}</td>
@@ -445,18 +455,51 @@ export const TransactionsListPage: React.FC = () => {
                                 <td className="py-2 px-3 text-right font-mono text-slate-700">
                                   {price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </td>
-                                <td className="py-2 px-3 text-right font-mono font-bold text-emerald-700">
+                                <td className={`py-2 px-3 text-right font-mono font-bold ${l.is_voided ? 'line-through text-slate-400' : 'text-emerald-700'}`}>
                                   {lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </td>
                               </>
                             )}
+                            <td className="py-2 px-3">
+                              {l.is_voided ? (
+                                <div>
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700">
+                                    <Ban className="h-2.5 w-2.5" />
+                                    <span>VOIDED</span>
+                                  </span>
+                                  {l.void_reason && (
+                                    <p className="text-[10px] text-rose-600 mt-0.5 max-w-xs truncate" title={l.void_reason}>
+                                      {l.void_reason}
+                                    </p>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                  ACTIVE
+                                </span>
+                              )}
+                            </td>
                             <td className="py-2 px-3 text-slate-500">{l.remarks || '—'}</td>
+                            {canVoidLine && (
+                              <td className="py-2 px-3 text-right">
+                                {!l.is_voided && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setVoidingLine(l)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition-colors"
+                                  >
+                                    <Ban className="h-3 w-3" />
+                                    <span>Void Line</span>
+                                  </button>
+                                )}
+                              </td>
+                            )}
                           </tr>
                         )
                       })
                     ) : (
                       <tr>
-                        <td colSpan={7} className="py-4 text-center text-slate-400">
+                        <td colSpan={9} className="py-4 text-center text-slate-400">
                           No line items recorded on this transaction header
                         </td>
                       </tr>
@@ -506,6 +549,22 @@ export const TransactionsListPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Void Line Confirmation Dialog */}
+      {selectedTx && (
+        <VoidLineModal
+          isOpen={!!voidingLine}
+          onClose={() => setVoidingLine(null)}
+          transactionId={selectedTx.id}
+          transactionNumber={selectedTx.transaction_number}
+          transactionType={selectedTx.transaction_type}
+          line={voidingLine}
+          onSuccess={() => {
+            refetch()
+            setSelectedTx(null)
+          }}
+        />
       )}
     </div>
   )

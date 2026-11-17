@@ -218,6 +218,17 @@ class TransactionLineRead(BaseModel):
     unit: str
     unit_price: Optional[Decimal] = None
     remarks: Optional[str] = None
+    is_voided: bool = False
+    voided_by: Optional[uuid.UUID] = None
+    voided_at: Optional[datetime] = None
+    void_reason: Optional[str] = None
+
+    @field_validator("is_voided", mode="before")
+    @classmethod
+    def ensure_is_voided_bool(cls, v: Any) -> bool:
+        if v is None:
+            return False
+        return bool(v)
 
     @computed_field
     @property
@@ -227,6 +238,18 @@ class TransactionLineRead(BaseModel):
         return None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class VoidTransactionLineRequest(BaseModel):
+    reason: str = Field(..., min_length=3, description="Mandatory reason for voiding the transaction line")
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Void reason cannot be empty or whitespace.")
+        return v.strip()
+
 
 
 class TransactionRead(BaseModel):
@@ -263,6 +286,9 @@ class TransactionRead(BaseModel):
     created_at: datetime
     posted_by: Optional[uuid.UUID] = None
     posted_at: Optional[datetime] = None
+    cancelled_by: Optional[uuid.UUID] = None
+    cancelled_at: Optional[datetime] = None
+    cancellation_reason: Optional[str] = None
     lines: List[TransactionLineRead] = []
 
     model_config = ConfigDict(from_attributes=True)

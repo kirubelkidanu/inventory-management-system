@@ -5,11 +5,14 @@ from typing import Any, List, Optional
 import uuid
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_, or_, select, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.item import Item
 from app.models.inventory import InventoryBalance
 from app.models.transaction import (
+    StockMovement,
     Transaction,
     TransactionLine,
     TransferLine,
@@ -1520,3 +1523,367 @@ class TransactionService:
         if hasattr(self.repo, "get_latest_inbound_unit_price"):
             return await self.repo.get_latest_inbound_unit_price(item_id, warehouse_id)
         return None
+
+    async def void_transaction_line(
+        self,
+        transaction_id: uuid.UUID,
+        line_id: uuid.UUID,
+        reason: str,
+        actor_user: Any,
+    ) -> Transaction:
+        """
+        Atomically voids/reverses an individual transaction line on a posted transaction
+        using the compensating ledger pattern (ADR-009 / ADR-012).
+        """
+        clean_reason = (reason or "").strip()
+        if not clean_reason or len(clean_reason) < 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A valid cancellation reason (minimum 3 characters) is required.",
+            )
+
+        actor_role = getattr(actor_user, "role", None)
+        if actor_role not in ("ADMIN", "INVENTORY_MANAGER"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden. Only ADMIN and INVENTORY_MANAGER can void transaction lines.",
+            )
+
+        parsed_user_id = _to_uuid(
+            getattr(actor_user, "id", None)
+            or getattr(actor_user, "user_id", None)
+            or actor_user
+        )
+        now_utc = datetime.now(timezone.utc)
+        effective_date = date.today()
+
+        try:
+            # 1. Fetch transaction with FOR UPDATE lock
+            stmt_tx = (
+                select(Transaction)
+                .where(Transaction.id == transaction_id)
+                .with_for_update()
+            )
+            res_tx = await self.session.execute(stmt_tx)
+            tx = res_tx.scalar_one_or_none()
+            if not tx:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Transaction with ID {transaction_id} not found.",
+                )
+
+            if tx.status in ("CANCELLED", "VOIDED"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot void line: transaction {tx.transaction_number} is already cancelled.",
+                )
+
+            if tx.status not in ("POSTED", "PARTIALLY_RECEIVED", "COMPLETED"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot void line: transaction {tx.transaction_number} has status '{tx.status}' (must be posted or active).",
+                )
+
+            # 2. Fetch all lines for this transaction with FOR UPDATE
+            stmt_lines = (
+                select(TransactionLine)
+                .where(TransactionLine.transaction_id == transaction_id)
+                .order_by(TransactionLine.line_number)
+                .with_for_update()
+            )
+            res_lines = await self.session.execute(stmt_lines)
+            all_lines = list(res_lines.scalars().all())
+
+            target_line = next((l for l in all_lines if l.id == line_id), None)
+            if not target_line:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Transaction line {line_id} not found on transaction {tx.transaction_number}.",
+                )
+
+            if target_line.is_voided:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Transaction line {target_line.line_number} is already voided.",
+                )
+
+            # 3. Determine compensating stock movement and transfer adjustment
+            tx_type = (tx.transaction_type or "").upper()
+
+            if tx_type == "ISTV":
+                # ISTV logic:
+                stmt_tr = (
+                    select(TransferRecord)
+                    .options(selectinload(TransferRecord.lines))
+                    .where(TransferRecord.istv_transaction_id == tx.id)
+                    .with_for_update()
+                )
+                tr_res = await self.session.execute(stmt_tr)
+                transfer_record = tr_res.scalar_one_or_none()
+                if not transfer_record:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Transfer record for ISTV {tx.transaction_number} not found.",
+                    )
+
+                transfer_line = next(
+                    (tl for tl in transfer_record.lines if tl.item_id == target_line.item_id),
+                    None,
+                )
+                if transfer_line:
+                    if transfer_line.received_quantity > Decimal("0"):
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Cannot void ISTV line: item has already been partially or fully received via ISTRV.",
+                        )
+                    await self.session.delete(transfer_line)
+                    await self.session.flush()
+
+                    # Check remaining transfer lines on transfer_record
+                    stmt_rem = select(TransferLine).where(
+                        TransferLine.transfer_record_id == transfer_record.id
+                    )
+                    res_rem = await self.session.execute(stmt_rem)
+                    remaining_tls = res_rem.scalars().all()
+                    if not remaining_tls:
+                        transfer_record.status = "CANCELLED"
+                        transfer_record.completed_at = now_utc
+
+                # Revert source warehouse stock (increment quantity_on_hand, append IN movement)
+                source_wh_id = tx.source_warehouse_id or tx.warehouse_id
+                balance = await self.repo.get_or_create_balance(
+                    warehouse_id=source_wh_id,
+                    item_id=target_line.item_id,
+                )
+                balance.quantity_on_hand += target_line.quantity
+                balance.updated_at = now_utc
+                running_bal = balance.quantity_on_hand
+
+                await self.repo.create_stock_movement(
+                    transaction_id=tx.id,
+                    transaction_line_id=target_line.id,
+                    item_id=target_line.item_id,
+                    warehouse_id=source_wh_id,
+                    project_id=tx.project_id,
+                    movement_type="IN",
+                    quantity=target_line.quantity,
+                    running_balance=running_bal,
+                    movement_date=effective_date,
+                )
+
+            elif tx_type in ("GRV", "ISTRV", "SRV"):
+                # Originally IN to target warehouse -> Compensating OUT
+                target_wh_id = (
+                    tx.destination_warehouse_id
+                    if tx_type == "ISTRV" and tx.destination_warehouse_id
+                    else tx.warehouse_id
+                )
+                balance = await self.repo.get_or_create_balance(
+                    warehouse_id=target_wh_id,
+                    item_id=target_line.item_id,
+                )
+                available = balance.quantity_on_hand - balance.quantity_reserved
+                if available < target_line.quantity:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"Cannot void line: available stock ({available}) in warehouse is less than "
+                            f"line quantity ({target_line.quantity}). Voiding would cause negative inventory."
+                        ),
+                    )
+
+                balance.quantity_on_hand -= target_line.quantity
+                balance.updated_at = now_utc
+                running_bal = balance.quantity_on_hand
+
+                await self.repo.create_stock_movement(
+                    transaction_id=tx.id,
+                    transaction_line_id=target_line.id,
+                    item_id=target_line.item_id,
+                    warehouse_id=target_wh_id,
+                    project_id=tx.project_id,
+                    movement_type="OUT",
+                    quantity=target_line.quantity,
+                    running_balance=running_bal,
+                    movement_date=effective_date,
+                )
+
+                if tx_type == "ISTRV" and tx.reference_transaction_id:
+                    transfer_record = await self.repo.get_transfer_record_by_istv_id(
+                        tx.reference_transaction_id
+                    )
+                    if transfer_record:
+                        stmt_tl = (
+                            select(TransferLine)
+                            .where(
+                                TransferLine.transfer_record_id == transfer_record.id,
+                                TransferLine.item_id == target_line.item_id,
+                            )
+                            .with_for_update()
+                        )
+                        tl_res = await self.session.execute(stmt_tl)
+                        tl = tl_res.scalar_one_or_none()
+                        if tl:
+                            tl.received_quantity = max(
+                                Decimal("0.0000"),
+                                tl.received_quantity - target_line.quantity,
+                            )
+                            # Re-evaluate transfer_record status
+                            stmt_all_tls = select(TransferLine).where(
+                                TransferLine.transfer_record_id == transfer_record.id
+                            )
+                            all_tls_res = await self.session.execute(stmt_all_tls)
+                            all_tls = all_tls_res.scalars().all()
+                            any_received = any(t.received_quantity > Decimal("0") for t in all_tls)
+                            all_received = all(t.received_quantity >= t.sent_quantity for t in all_tls)
+                            if all_received and all_tls:
+                                transfer_record.status = "COMPLETED"
+                            elif any_received:
+                                transfer_record.status = "PARTIALLY_RECEIVED"
+                                transfer_record.completed_at = None
+                            else:
+                                transfer_record.status = "IN_TRANSIT"
+                                transfer_record.completed_at = None
+
+            elif tx_type == "SIV":
+                # Originally OUT from warehouse_id -> Compensating IN
+                target_wh_id = tx.warehouse_id
+                balance = await self.repo.get_or_create_balance(
+                    warehouse_id=target_wh_id,
+                    item_id=target_line.item_id,
+                )
+                balance.quantity_on_hand += target_line.quantity
+                balance.updated_at = now_utc
+                running_bal = balance.quantity_on_hand
+
+                await self.repo.create_stock_movement(
+                    transaction_id=tx.id,
+                    transaction_line_id=target_line.id,
+                    item_id=target_line.item_id,
+                    warehouse_id=target_wh_id,
+                    project_id=tx.project_id,
+                    movement_type="IN",
+                    quantity=target_line.quantity,
+                    running_balance=running_bal,
+                    movement_date=effective_date,
+                )
+
+            elif tx_type == "ADJUSTMENT":
+                # Check original movement direction for this line
+                stmt_m = (
+                    select(StockMovement)
+                    .where(StockMovement.transaction_line_id == target_line.id)
+                    .order_by(StockMovement.created_at.asc())
+                )
+                m_res = await self.session.execute(stmt_m)
+                orig_movement = m_res.scalars().first()
+
+                target_wh_id = tx.warehouse_id
+                balance = await self.repo.get_or_create_balance(
+                    warehouse_id=target_wh_id,
+                    item_id=target_line.item_id,
+                )
+
+                if orig_movement and orig_movement.movement_type == "OUT":
+                    # Was OUT -> Compensating IN
+                    balance.quantity_on_hand += target_line.quantity
+                    balance.updated_at = now_utc
+                    running_bal = balance.quantity_on_hand
+
+                    await self.repo.create_stock_movement(
+                        transaction_id=tx.id,
+                        transaction_line_id=target_line.id,
+                        item_id=target_line.item_id,
+                        warehouse_id=target_wh_id,
+                        project_id=tx.project_id,
+                        movement_type="IN",
+                        quantity=target_line.quantity,
+                        running_balance=running_bal,
+                        movement_date=effective_date,
+                    )
+                else:
+                    # Was IN (or default) -> Compensating OUT
+                    available = balance.quantity_on_hand - balance.quantity_reserved
+                    if available < target_line.quantity:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=(
+                                f"Cannot void line: available stock ({available}) in warehouse is less than "
+                                f"line quantity ({target_line.quantity}). Voiding would cause negative inventory."
+                            ),
+                        )
+                    balance.quantity_on_hand -= target_line.quantity
+                    balance.updated_at = now_utc
+                    running_bal = balance.quantity_on_hand
+
+                    await self.repo.create_stock_movement(
+                        transaction_id=tx.id,
+                        transaction_line_id=target_line.id,
+                        item_id=target_line.item_id,
+                        warehouse_id=target_wh_id,
+                        project_id=tx.project_id,
+                        movement_type="OUT",
+                        quantity=target_line.quantity,
+                        running_balance=running_bal,
+                        movement_date=effective_date,
+                    )
+
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Unsupported transaction type '{tx_type}' for line voiding.",
+                )
+
+            # 4. Mark line as voided
+            target_line.is_voided = True
+            target_line.voided_by = parsed_user_id
+            target_line.voided_at = now_utc
+            target_line.void_reason = clean_reason
+
+            # 5. If all lines on the Transaction are now voided, update transaction status to CANCELLED
+            if all(l.is_voided for l in all_lines):
+                tx.status = "CANCELLED"
+                tx.cancelled_by = parsed_user_id
+                tx.cancelled_at = now_utc
+                tx.cancellation_reason = clean_reason
+
+            # 6. Audit log
+            await self.repo.create_audit_log(
+                actor_user_id=parsed_user_id,
+                action="CANCEL",
+                entity_type="transaction_line",
+                entity_id=str(target_line.id),
+                before_state={
+                    "transaction_id": str(tx.id),
+                    "transaction_number": tx.transaction_number,
+                    "transaction_type": tx.transaction_type,
+                    "line_id": str(target_line.id),
+                    "line_number": target_line.line_number,
+                    "item_id": str(target_line.item_id),
+                    "quantity": str(target_line.quantity),
+                    "unit": target_line.unit,
+                    "is_voided": False,
+                },
+                after_state={
+                    "transaction_id": str(tx.id),
+                    "transaction_number": tx.transaction_number,
+                    "line_id": str(target_line.id),
+                    "is_voided": True,
+                    "voided_by": str(parsed_user_id),
+                    "voided_at": now_utc.isoformat(),
+                    "void_reason": clean_reason,
+                    "transaction_status": tx.status,
+                },
+                change_summary=f"Voided line {target_line.line_number} of {tx.transaction_type} {tx.transaction_number}: {clean_reason}",
+                reason=clean_reason,
+            )
+
+            # 7. Commit atomically
+            await self.session.commit()
+            refreshed = await self.repo.get_transaction_by_id(tx.id)
+            return refreshed or tx
+
+        except Exception:
+            await self.session.rollback()
+            raise
+

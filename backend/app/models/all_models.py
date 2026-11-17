@@ -382,12 +382,18 @@ class TransactionLine(Base):
     )
     quantity: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False)
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(15, 4), nullable=True)
     remarks: Mapped[str | None] = mapped_column(Text)
+    is_voided: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    voided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    void_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     transaction: Mapped[Transaction] = relationship(
         "Transaction", back_populates="lines"
     )
     item: Mapped[Item] = relationship("Item", lazy="select")
+    voided_by_user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[voided_by])
 
 
 # ---------------------------------------------------------------------------

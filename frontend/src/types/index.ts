@@ -131,6 +131,10 @@ export interface TransactionLine {
   unit_price?: number | string | null
   total_price?: number | string | null
   remarks?: string | null
+  is_voided?: boolean
+  voided_by?: string | null
+  voided_at?: string | null
+  void_reason?: string | null
   item?: Item
 }
 
@@ -168,6 +172,9 @@ export interface Transaction {
   created_at?: string
   posted_by?: string | null
   posted_at?: string | null
+  cancelled_by?: string | null
+  cancelled_at?: string | null
+  cancellation_reason?: string | null
   lines?: TransactionLine[]
 }
 

@@ -18,6 +18,7 @@ from app.schemas.transaction import (
     SIVReturnableItemsResponse,
     TransactionRead,
     TransferRecordRead,
+    VoidTransactionLineRequest,
 )
 from app.security.auth import AuthenticatedUser, get_current_user, require_roles
 from app.services.transaction import TransactionService
@@ -262,4 +263,31 @@ async def create_opening_balance(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to post opening balance: {str(e)}",
         )
+
+
+@router.post(
+    "/{transaction_id}/lines/{line_id}/void",
+    response_model=TransactionRead,
+    summary="Void a specific transaction line on a posted transaction",
+)
+async def void_transaction_line(
+    transaction_id: uuid.UUID,
+    line_id: uuid.UUID,
+    payload: VoidTransactionLineRequest,
+    current_user: AuthenticatedUser = Depends(
+        require_roles("ADMIN", "INVENTORY_MANAGER")
+    ),
+    service: TransactionService = Depends(get_transaction_service),
+):
+    """
+    Atomically voids an individual line on a posted transaction using the
+    compensating ledger reversal pattern (ADR-009 / ADR-012).
+    """
+    return await service.void_transaction_line(
+        transaction_id=transaction_id,
+        line_id=line_id,
+        reason=payload.reason,
+        actor_user=current_user,
+    )
+
 
