@@ -38,6 +38,7 @@ async def create_item(
 async def list_items(
     response: Response,
     search: str | None = Query(None),
+    q: str | None = Query(None),
     category_id: UUID | None = Query(None),
     include_inactive: bool = Query(False),
     is_active: bool | None = Query(None),
@@ -47,6 +48,7 @@ async def list_items(
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: ItemService = Depends(get_item_service),
 ):
+    eff_search = search if search is not None else q
     eff_limit = limit if limit is not None else page_size
     eff_include_inactive = include_inactive
     if is_active is not None:
@@ -54,7 +56,7 @@ async def list_items(
 
     if hasattr(service, "list_items_with_count"):
         items, total = await service.list_items_with_count(
-            search=search,
+            search=eff_search,
             category_id=category_id,
             include_inactive=eff_include_inactive,
             skip=skip,

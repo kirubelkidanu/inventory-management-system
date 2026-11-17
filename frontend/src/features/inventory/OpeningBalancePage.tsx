@@ -30,7 +30,9 @@ import type {
   InitialStockBatchPreviewResponse,
   CommitInitialStockResponse,
   Transaction,
+  Item,
 } from '@/types'
+import { ItemSearchCombobox } from '@/components/ItemSearchCombobox'
 
 export const OpeningBalancePage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'excel' | 'manual' | 'history'>('excel')
@@ -40,7 +42,7 @@ export const OpeningBalancePage: React.FC = () => {
   const warehouses = useMemo(() => rawWarehouses.filter((w) => w.is_active !== false), [rawWarehouses])
   const { data: rawProjects = [], isLoading: isLoadingProjects } = useProjects()
   const projects = useMemo(() => rawProjects.filter((p) => p.is_active !== false), [rawProjects])
-  const { data: itemsData } = useItems({ limit: 1000 })
+  const { data: itemsData } = useItems({ limit: 5 })
   const items = itemsData?.items || []
 
   // ---------------------------------------------------------------------------
@@ -203,6 +205,23 @@ export const OpeningBalancePage: React.FC = () => {
 
   const handleRemoveManualLine = (index: number) => {
     setManualLines((prev) => prev.filter((_, idx) => idx !== index))
+  }
+
+  const handleManualItemChange = (index: number, newItemId: string, item?: Item) => {
+    setManualLines((prev) => {
+      const updated = [...prev]
+      updated[index] = {
+        ...updated[index],
+        item_id: newItemId,
+        unit: item?.default_unit || updated[index].unit || 'PCS',
+      }
+      if (item?.latest_unit_price !== undefined && item?.latest_unit_price !== null && Number(item.latest_unit_price) > 0) {
+        if (!updated[index].unit_price || updated[index].unit_price === '0.00') {
+          updated[index].unit_price = Number(item.latest_unit_price).toFixed(2)
+        }
+      }
+      return updated
+    })
   }
 
   const handleManualLineChange = (
@@ -1092,7 +1111,7 @@ export const OpeningBalancePage: React.FC = () => {
                     <thead>
                       <tr className="bg-slate-50 text-slate-600 uppercase tracking-wider text-[11px] border-b border-slate-200">
                         <th className="py-2.5 px-3 w-12 text-center">#</th>
-                        <th className="py-2.5 px-3 min-w-[240px]">Item Master SKU &amp; Name *</th>
+                        <th className="py-2.5 px-3 min-w-[340px]">Item Master SKU &amp; Name *</th>
                         <th className="py-2.5 px-3 w-28 text-right">Quantity *</th>
                         <th className="py-2.5 px-3 w-28">UOM</th>
                         <th className="py-2.5 px-3 w-32 text-right">Unit Price (ETB)</th>
@@ -1113,19 +1132,13 @@ export const OpeningBalancePage: React.FC = () => {
                               {idx + 1}
                             </td>
                             <td className="py-2.5 px-3">
-                              <select
+                              <ItemSearchCombobox
                                 value={line.item_id}
-                                onChange={(e) => handleManualLineChange(idx, 'item_id', e.target.value)}
-                                className="w-full text-xs border-slate-300 rounded shadow-sm focus:border-blue-500 focus:ring-blue-500 bg-white"
+                                onChange={(newItemId, selectedItem) => handleManualItemChange(idx, newItemId, selectedItem)}
                                 required
-                              >
-                                <option value="">-- Choose Item from Catalog --</option>
-                                {items.map((item) => (
-                                  <option key={item.id} value={item.id}>
-                                    {item.item_code} - {item.description} ({item.default_unit})
-                                  </option>
-                                ))}
-                              </select>
+                                placeholder="Search by SKU code (e.g. 01-CM) or description..."
+                                excludeItemIds={manualLines.filter((_, i) => i !== idx).map((l) => l.item_id).filter(Boolean)}
+                              />
                             </td>
                             <td className="py-2.5 px-3 text-right">
                               <input

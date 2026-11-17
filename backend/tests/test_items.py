@@ -46,7 +46,14 @@ class FakeItemService:
                 item for item in items
                 if term in item.item_code.lower() or term in item.description.lower()
             ]
-        items.sort(key=lambda x: x.item_code)
+            items.sort(
+                key=lambda x: (
+                    0 if x.item_code.lower() == term else (1 if x.item_code.lower().startswith(term) else 2),
+                    x.item_code,
+                )
+            )
+        else:
+            items.sort(key=lambda x: x.item_code)
         if skip is not None and skip > 0:
             items = items[skip:]
         if limit is not None and limit > 0:
@@ -73,7 +80,17 @@ class FakeItemService:
                 if term in item.item_code.lower() or term in item.description.lower()
             ]
         total = len(all_items)
-        items = sorted(all_items, key=lambda x: x.item_code)
+        if search and search.strip():
+            term = search.strip().lower()
+            items = sorted(
+                all_items,
+                key=lambda x: (
+                    0 if x.item_code.lower() == term else (1 if x.item_code.lower().startswith(term) else 2),
+                    x.item_code,
+                ),
+            )
+        else:
+            items = sorted(all_items, key=lambda x: x.item_code)
         if skip is not None and skip > 0:
             items = items[skip:]
         if limit is not None and limit > 0:
@@ -898,6 +915,80 @@ async def test_list_items_server_side_search_and_pagination(token_factory, fake_
         assert len(combobox_items) == 2
         assert combobox_items[0]["item_code"] == "PAG-001"
         assert combobox_items[1]["item_code"] == "PAG-002"
+
+        # Search with limit=25 and is_active=true
+        combobox_res_limit = await client.get(
+            "/api/v1/items?search=PAG&limit=25&is_active=true",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert combobox_res_limit.status_code == 200
+        combobox_items_limit = combobox_res_limit.json()
+        assert len(combobox_items_limit) == 5
+
+        # Test query param 'q' behaves identically to 'search'
+        q_res = await client.get(
+            "/api/v1/items?q=Item 3&limit=25&is_active=true",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert q_res.status_code == 200
+        q_items = q_res.json()
+        assert len(q_items) == 1
+        assert q_items[0]["item_code"] == "PAG-003"
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_list_items_exact_inventory_id_ranking(token_factory, fake_service):
+    app.dependency_overrides[get_item_service] = lambda: fake_service
+    token = token_factory(role="ADMIN")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # Create an item whose description mentions 01-CM-00001
+        await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "00-MISC-999",
+                "description": "Cross reference to 01-CM-00001 cement bag",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "BAG",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        # Create the exact item 01-CM-00001
+        await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "01-CM-00001",
+                "description": "Portland Cement Grade 42.5N",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "BAG",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        # Create a prefix match item 01-CM-00001-ALT
+        await client.post(
+            "/api/v1/items",
+            json={
+                "item_code": "01-CM-00001-ALT",
+                "description": "Alternative Cement Grade 42.5N",
+                "category_id": str(fake_service.categories.valid_category_id),
+                "default_unit": "BAG",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        # Searching for exact item_code "01-CM-00001" must return exact match at rank 0
+        search_res = await client.get(
+            "/api/v1/items?search=01-CM-00001&limit=25&is_active=true",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert search_res.status_code == 200
+        results = search_res.json()
+        assert len(results) >= 2
+        # Exact match must be first
+        assert results[0]["item_code"] == "01-CM-00001"
+        # Prefix match must be next ahead of description-only match
+        assert results[1]["item_code"] == "01-CM-00001-ALT"
+        assert results[2]["item_code"] == "00-MISC-999"
     app.dependency_overrides.clear()
 
 

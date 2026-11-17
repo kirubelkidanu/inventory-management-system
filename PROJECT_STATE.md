@@ -1,6 +1,26 @@
 ## Current Phase
 
-Atomic Single-Line Compensating Ledger Reversal (ADR-009) & Strict Authentication Complete
+Searchable Item Master Combobox & Atomic Compensating Ledger Complete
+
+- Searchable Item Master Autocomplete/Combobox (`ItemSearchCombobox`):
+  * Backend API & Repository Search Ranking:
+    - Updated `GET /api/v1/items` (`backend/app/api/routes/items.py`) to support both `search` and `q` query parameters, `limit` (e.g. 25), and active item filtering (`is_active=true`).
+    - Enhanced `ItemRepository.list` (`backend/app/repositories/item.py`) with SQL `case` ranking so exact matches on `item_code` rank first (priority 0), prefix matches on `item_code` rank second (priority 1), description matches rank third (priority 2), and alphabetical tie-breaking `Item.item_code.asc()` follows.
+  * Reusable Frontend Component (`frontend/src/components/ItemSearchCombobox.tsx`):
+    - Fast 250ms debounced search querying `GET /api/v1/items?search=<query>&limit=25&is_active=true` against all 5,646 items.
+    - Floating dropdown showing bold font-mono `item_code`, `description`, dynamic category badge (`code · name` resolved via `useCategories()`), and `default_unit` (`UOM`).
+    - Full keyboard navigation (`ArrowDown`, `ArrowUp`, `Enter` to select, `Escape` to close) with auto-scroll.
+    - Selected trigger display showing `item_code — description (default_unit)` with clear button (`×`).
+    - Enforces `ADR-006` (`UNIQUE(transaction_id, item_id)`) by marking already-added items as disabled with an "Already added" warning.
+    - Re-exported via `ItemCombobox` to automatically upgrade all transaction line forms (`GRVPage`, `SIVPage`, `ISTVPage`, `ISTRVPage`, `SRVPage`, `AdjustmentPage`).
+  * Opening Balance Manual Entry Form Integration:
+    - Replaced static truncated `<select>` with `<ItemSearchCombobox>` in `frontend/src/features/inventory/OpeningBalancePage.tsx`.
+    - Auto-populates line `UOM` (`default_unit`) and latest unit price on item selection.
+    - Removed heavy `useItems({ limit: 1000 })` query on page mount.
+  * Quality Gates & Verification:
+    - Added backend test coverage in `backend/tests/test_items.py` verifying exact Inventory ID ranking, prefix prioritization, and `q`/`search` parameter equivalency.
+    - Full test suite passes: **298 tests passed** across 16 test modules (100% pass rate).
+    - Frontend production bundle built cleanly with 0 errors via Vite.
 
 - Single-Line Reversal (Compensating Ledger Reversal Pattern, ADR-009):
   * Schema Migration: Created and executed `database/migrations/006_add_transaction_line_void_tracking.sql` on live Supabase PostgreSQL. Added `is_voided`, `voided_by`, `voided_at`, `void_reason` to `transaction_lines` with check constraint `chk_tx_line_void_reason`.
@@ -50,7 +70,7 @@ Atomic Single-Line Compensating Ledger Reversal (ADR-009) & Strict Authenticatio
 ## Project Status
 
 The official 13 client project sites and corresponding warehouse bin locations have been fully seeded and integrated. Placeholder records (`WH001`, `WH002`, `PRJ-KZ-01`) have been safely archived without violating ledger immutability (`is_active = FALSE`, marked `[Archived]`). Full dynamic site and warehouse bin management has been implemented across the backend API, repositories, services, and frontend administration screens (`/warehouses` and `/projects`).
-The entire backend and frontend enterprise inventory management platform is fully configured, secured, verified, seeded with live production master data and opening stock balances in Supabase PostgreSQL, and passes **297 tests** across 16 test modules with clean client production packaging.
+The entire backend and frontend enterprise inventory management platform is fully configured, secured, verified, seeded with live production master data and opening stock balances in Supabase PostgreSQL, and passes **298 tests** across 16 test modules with clean client production packaging.
 Environment variable templates (`backend/.env.example`, `frontend/.env.example`, and root `.env.example`) strictly segregate server-side secrets from client-safe variables with zero committed credentials. Security middleware (`CORSMiddleware`), JWT authentication routes (`/api/v1/auth/token`, `/api/v1/auth/demo-login`, `/api/v1/auth/me`), and database stack trace sanitization are active in `backend/app/main.py`. The live PostgreSQL database is verified end-to-end with zero reconciliation discrepancies (`vw_reconciliation_discrepancies` == 0), dual-write balance/ledger immutability, in-transit transfer tracking, and authoritative Trial Balance reporting.
 
 ## Database Status

@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Optional, Dict
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -34,14 +34,24 @@ class ItemRepository:
         if category_id is not None:
             stmt = stmt.where(Item.category_id == category_id)
         if search and search.strip():
-            term = f"%{search.strip().lower()}%"
+            clean_search = search.strip().lower()
+            term = f"%{clean_search}%"
             stmt = stmt.where(
                 or_(
                     func.lower(Item.item_code).like(term),
                     func.lower(Item.description).like(term),
                 )
             )
-        stmt = stmt.order_by(Item.item_code.asc())
+            stmt = stmt.order_by(
+                case(
+                    (func.lower(Item.item_code) == clean_search, 0),
+                    (func.lower(Item.item_code).like(f"{clean_search}%"), 1),
+                    else_=2,
+                ),
+                Item.item_code.asc(),
+            )
+        else:
+            stmt = stmt.order_by(Item.item_code.asc())
         if skip is not None and skip > 0:
             stmt = stmt.offset(skip)
         if limit is not None and limit > 0:
