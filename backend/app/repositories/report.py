@@ -37,6 +37,7 @@ class ReportRepository:
         category_id: Optional[uuid.UUID] = None,
         transaction_type: Optional[str] = None,
         search: Optional[str] = None,
+        parent_tx: Optional[Any] = None,
     ) -> list:
         conditions = []
         if date_from:
@@ -60,22 +61,26 @@ class ReportRepository:
             conditions.append(Transaction.transaction_type == transaction_type)
         if search:
             term = f"%{search}%"
-            conditions.append(
-                or_(
-                    Item.item_code.ilike(term),
-                    Item.description.ilike(term),
-                    Transaction.transaction_number.ilike(term),
-                    Transaction.invoice_no.ilike(term),
-                    Transaction.received_grv_no.ilike(term),
-                    Transaction.siv_no.ilike(term),
-                    Transaction.requested_no.ilike(term),
-                    Transaction.istv_no.ilike(term),
-                    Transaction.istrv_no.ilike(term),
-                    Transaction.external_reference.ilike(term),
-                    Transaction.plate_no.ilike(term),
-                    Transaction.driver_name.ilike(term),
-                )
-            )
+            search_filters = [
+                Item.item_code.ilike(term),
+                Item.description.ilike(term),
+                Transaction.transaction_number.ilike(term),
+                Transaction.invoice_no.ilike(term),
+                Transaction.received_grv_no.ilike(term),
+                Transaction.siv_no.ilike(term),
+                Transaction.requested_no.ilike(term),
+                Transaction.istv_no.ilike(term),
+                Transaction.istrv_no.ilike(term),
+                Transaction.external_reference.ilike(term),
+                Transaction.plate_no.ilike(term),
+                Transaction.driver_name.ilike(term),
+            ]
+            if parent_tx is not None:
+                search_filters.extend([
+                    parent_tx.plate_no.ilike(term),
+                    parent_tx.driver_name.ilike(term),
+                ])
+            conditions.append(or_(*search_filters))
         return conditions
 
     async def get_trial_balance(
@@ -95,6 +100,7 @@ class ReportRepository:
         Queries the immutable stock ledger joined with voucher metadata and dimensions.
         Returns: (rows, total_count, total_in, total_out)
         """
+        ParentTx = aliased(Transaction)
         conditions = self._build_trial_balance_conditions(
             date_from=date_from,
             date_to=date_to,
@@ -104,20 +110,7 @@ class ReportRepository:
             category_id=category_id,
             transaction_type=transaction_type,
             search=search,
-        )
-
-        base_from = (
-            select(StockMovement)
-            .join(Transaction, StockMovement.transaction_id == Transaction.id)
-            .join(
-                TransactionLine,
-                StockMovement.transaction_line_id == TransactionLine.id,
-            )
-            .join(Item, StockMovement.item_id == Item.id)
-            .join(Category, Item.category_id == Category.id)
-            .join(Warehouse, StockMovement.warehouse_id == Warehouse.id)
-            .outerjoin(Project, StockMovement.project_id == Project.id)
-            .outerjoin(User, Transaction.created_by == User.id)
+            parent_tx=ParentTx,
         )
 
         # 1. Total count
@@ -125,6 +118,7 @@ class ReportRepository:
             select(func.count(StockMovement.id))
             .select_from(StockMovement)
             .join(Transaction, StockMovement.transaction_id == Transaction.id)
+            .outerjoin(ParentTx, Transaction.reference_transaction_id == ParentTx.id)
             .join(Item, StockMovement.item_id == Item.id)
             .join(Warehouse, StockMovement.warehouse_id == Warehouse.id)
         )
@@ -155,6 +149,7 @@ class ReportRepository:
             select(in_expr.label("total_in"), out_expr.label("total_out"))
             .select_from(StockMovement)
             .join(Transaction, StockMovement.transaction_id == Transaction.id)
+            .outerjoin(ParentTx, Transaction.reference_transaction_id == ParentTx.id)
             .join(Item, StockMovement.item_id == Item.id)
             .join(Warehouse, StockMovement.warehouse_id == Warehouse.id)
         )
@@ -191,8 +186,8 @@ class ReportRepository:
                 Warehouse.code.label("warehouse_code"),
                 Warehouse.name.label("warehouse_name"),
                 Project.name.label("project_name"),
-                Transaction.plate_no,
-                Transaction.driver_name,
+                func.coalesce(Transaction.plate_no, ParentTx.plate_no).label("plate_no"),
+                func.coalesce(Transaction.driver_name, ParentTx.driver_name).label("driver_name"),
                 StockMovement.movement_type,
                 StockMovement.quantity,
                 StockMovement.signed_quantity,
@@ -202,6 +197,7 @@ class ReportRepository:
             )
             .select_from(StockMovement)
             .join(Transaction, StockMovement.transaction_id == Transaction.id)
+            .outerjoin(ParentTx, Transaction.reference_transaction_id == ParentTx.id)
             .join(
                 TransactionLine,
                 StockMovement.transaction_line_id == TransactionLine.id,
@@ -239,6 +235,7 @@ class ReportRepository:
         search: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Retrieves unpaginated trial balance movements for Excel export."""
+        ParentTx = aliased(Transaction)
         conditions = self._build_trial_balance_conditions(
             date_from=date_from,
             date_to=date_to,
@@ -248,6 +245,7 @@ class ReportRepository:
             category_id=category_id,
             transaction_type=transaction_type,
             search=search,
+            parent_tx=ParentTx,
         )
 
         stmt = (
@@ -276,8 +274,8 @@ class ReportRepository:
                 Warehouse.code.label("warehouse_code"),
                 Warehouse.name.label("warehouse_name"),
                 Project.name.label("project_name"),
-                Transaction.plate_no,
-                Transaction.driver_name,
+                func.coalesce(Transaction.plate_no, ParentTx.plate_no).label("plate_no"),
+                func.coalesce(Transaction.driver_name, ParentTx.driver_name).label("driver_name"),
                 StockMovement.movement_type,
                 StockMovement.quantity,
                 StockMovement.signed_quantity,
@@ -287,6 +285,7 @@ class ReportRepository:
             )
             .select_from(StockMovement)
             .join(Transaction, StockMovement.transaction_id == Transaction.id)
+            .outerjoin(ParentTx, Transaction.reference_transaction_id == ParentTx.id)
             .join(
                 TransactionLine,
                 StockMovement.transaction_line_id == TransactionLine.id,

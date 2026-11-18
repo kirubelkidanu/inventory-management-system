@@ -393,6 +393,8 @@ async def test_service_export_trial_balance_excel():
     # Check headers at row 4
     headers = [cell.value for cell in ws[4]]
     assert "Tx Number" in headers
+    assert "Vehicle Plate No" in headers
+    assert "Driver Name" in headers
     assert "IN" in headers
     assert "OUT" in headers
     assert "Unit Price (ETB)" in headers

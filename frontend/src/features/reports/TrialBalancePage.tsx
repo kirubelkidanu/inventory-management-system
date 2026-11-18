@@ -383,7 +383,8 @@ export const TrialBalancePage: React.FC = () => {
                 <th className="py-3 px-3.5">SKU & Item Description</th>
                 <th className="py-3 px-3 whitespace-nowrap">Category</th>
                 <th className="py-3 px-3 whitespace-nowrap">Warehouse / Project</th>
-                <th className="py-3 px-3 whitespace-nowrap">Logistics / Party</th>
+                <th className="py-3 px-3 whitespace-nowrap">Vehicle Plate No</th>
+                <th className="py-3 px-3 whitespace-nowrap">Driver Name</th>
                 <th className="py-3 px-3.5 text-right whitespace-nowrap">IN (Qty)</th>
                 <th className="py-3 px-3.5 text-right whitespace-nowrap">OUT (Qty)</th>
                 <th className="py-3 px-3.5 text-right whitespace-nowrap">Running Bal</th>
@@ -395,14 +396,14 @@ export const TrialBalancePage: React.FC = () => {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {isLoading ? (
                 <tr>
-                  <td colSpan={14} className="py-16 text-center text-slate-400">
+                  <td colSpan={15} className="py-16 text-center text-slate-400">
                     <Loader2 className="mx-auto h-7 w-7 animate-spin text-slate-400 mb-2" />
                     <span>Loading Trial Balance records...</span>
                   </td>
                 </tr>
               ) : !data || data.items.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="py-16 text-center text-slate-400">
+                  <td colSpan={15} className="py-16 text-center text-slate-400">
                     <Scale className="mx-auto h-8 w-8 text-slate-300 mb-2" />
                     <p className="font-semibold text-slate-600">No stock movements found</p>
                     <p className="text-xs text-slate-400 mt-0.5">Try widening your date range or clearing filters.</p>
@@ -443,14 +444,21 @@ export const TrialBalancePage: React.FC = () => {
                         <div className="text-slate-400 text-[10px]">{row.project_name}</div>
                       )}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-slate-600">
+                    <td className="py-3 px-3 whitespace-nowrap">
                       {row.plate_no ? (
-                        <div className="flex items-center gap-1 font-mono text-[11px]">
-                          <Truck className="h-3 w-3 text-slate-400" />
+                        <div className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-slate-800 bg-slate-100 rounded-md px-2 py-0.5 border border-slate-200">
+                          <Truck className="h-3 w-3 text-slate-500" />
                           <span>{row.plate_no}</span>
                         </div>
                       ) : (
-                        '—'
+                        <span className="text-slate-400 font-mono">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      {row.driver_name ? (
+                        <span className="font-medium text-slate-800">{row.driver_name}</span>
+                      ) : (
+                        <span className="text-slate-400 font-mono">—</span>
                       )}
                     </td>
                     <td className="py-3 px-3.5 text-right font-mono font-bold text-emerald-600 whitespace-nowrap">

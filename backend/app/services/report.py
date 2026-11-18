@@ -224,7 +224,7 @@ class ReportService:
             "WH Code",
             "Warehouse Name",
             "Project",
-            "Plate No",
+            "Vehicle Plate No",
             "Driver Name",
             "IN",
             "OUT",

@@ -1,9 +1,12 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
+import io
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import openpyxl
 import pytest
+from sqlalchemy.orm import aliased
 from app.models.transaction import (
     Transaction,
     TransferRecord,
@@ -18,6 +21,7 @@ from app.schemas.transaction import (
 )
 from app.services.transaction import TransactionService
 from app.services.report import ReportService
+from app.repositories.report import ReportRepository
 
 
 @pytest.mark.asyncio
@@ -228,3 +232,115 @@ def test_transfer_record_properties():
     assert tr.istv_number == "ISTV-202611-0099"
     assert tr.istv_no == "ISTV-REF-99"
     assert tr.invoice_no == "WB-INV-99"
+
+
+def test_trial_balance_search_conditions_include_parent_transport():
+    """Verify _build_trial_balance_conditions searches plate_no and driver_name for both direct and parent transactions."""
+    repo = ReportRepository(MagicMock())
+    parent_tx = aliased(Transaction)
+
+    conditions = repo._build_trial_balance_conditions(
+        search="AA-3-9999",
+        parent_tx=parent_tx,
+    )
+    assert len(conditions) == 1
+    # Check SQL representation contains plate_no and driver_name
+    compiled = str(conditions[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "plate_no" in compiled
+    assert "driver_name" in compiled
+
+
+def test_trial_balance_item_mapping_transport():
+    """Verify _map_trial_balance_item maps plate_no and driver_name into TrialBalanceItem."""
+    service = ReportService(MagicMock())
+    row = {
+        "movement_id": uuid4(),
+        "movement_date": date.today(),
+        "created_at": datetime.now(timezone.utc),
+        "transaction_id": uuid4(),
+        "transaction_number": "ISTV-202611-0001",
+        "transaction_type": "ISTV",
+        "invoice_no": "WB-1234",
+        "received_grv_no": None,
+        "siv_no": None,
+        "requested_no": None,
+        "istv_no": "ISTV-001",
+        "istrv_no": None,
+        "external_reference": None,
+        "item_id": uuid4(),
+        "item_code": "01-CM-00001",
+        "item_description": "Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": uuid4(),
+        "warehouse_code": "WH001",
+        "warehouse_name": "Main Warehouse",
+        "project_name": "Project A",
+        "plate_no": "AA-3-12345",
+        "driver_name": "Abebe Bikila",
+        "movement_type": "OUT",
+        "quantity": Decimal("50.0000"),
+        "signed_quantity": Decimal("-50.0000"),
+        "running_balance": Decimal("150.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Clerk",
+        "unit_price": Decimal("100.0000"),
+    }
+    item = service._map_trial_balance_item(row)
+    assert item.plate_no == "AA-3-12345"
+    assert item.driver_name == "Abebe Bikila"
+
+
+@pytest.mark.asyncio
+async def test_trial_balance_export_excel_transport_columns():
+    """Verify export_trial_balance_excel writes Vehicle Plate No and Driver Name in dedicated columns."""
+    service = ReportService(AsyncMock())
+    raw_rows = [
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 11, 1),
+            "created_at": datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc),
+            "transaction_id": uuid4(),
+            "transaction_number": "ISTV-202611-0088",
+            "transaction_type": "ISTV",
+            "invoice_no": "WB-8888",
+            "received_grv_no": None,
+            "siv_no": None,
+            "requested_no": None,
+            "istv_no": "ISTV-REF-88",
+            "istrv_no": None,
+            "external_reference": None,
+            "item_id": uuid4(),
+            "item_code": "02-ST-00001",
+            "item_description": "Steel Rebar 12mm",
+            "category_name": "STEEL",
+            "unit": "PCS",
+            "warehouse_id": uuid4(),
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main Store",
+            "project_name": "Site Alpha",
+            "plate_no": "ET-3-88888",
+            "driver_name": "Almaz Tesfaye",
+            "movement_type": "OUT",
+            "quantity": Decimal("25.0000"),
+            "signed_quantity": Decimal("-25.0000"),
+            "running_balance": Decimal("75.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Supervisor",
+            "unit_price": Decimal("200.0000"),
+        }
+    ]
+    service.repo.get_all_trial_balance_movements = AsyncMock(return_value=raw_rows)
+
+    excel_stream = await service.export_trial_balance_excel()
+    wb = openpyxl.load_workbook(excel_stream, data_only=True)
+    ws = wb["Trial Balance"]
+
+    headers = [cell.value for cell in ws[4]]
+    plate_idx = headers.index("Vehicle Plate No")
+    driver_idx = headers.index("Driver Name")
+
+    row_vals = [cell.value for cell in ws[5]]
+    assert row_vals[plate_idx] == "ET-3-88888"
+    assert row_vals[driver_idx] == "Almaz Tesfaye"
+

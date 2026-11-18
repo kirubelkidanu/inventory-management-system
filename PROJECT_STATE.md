@@ -1,5 +1,29 @@
 ## Current Phase
 
+Dedicated "Vehicle Plate No" & "Driver Name" Columns in Trial Balance Ledger & Excel Export Complete
+
+- Dedicated Transport Tracking in Trial Balance (`Vehicle Plate No` & `Driver Name`):
+  * Backend Query & Repository Resolution (`backend/app/repositories/report.py`):
+    - Updated `ReportRepository.get_trial_balance` and `get_all_trial_balance_movements` with `ParentTx = aliased(Transaction)`.
+    - Resolved `func.coalesce(Transaction.plate_no, ParentTx.plate_no).label("plate_no")` and `func.coalesce(Transaction.driver_name, ParentTx.driver_name).label("driver_name")` so both dispatch (`ISTV`) and receiving (`ISTRV`) movements carry the transport logistics information.
+    - Updated `_build_trial_balance_conditions` to search `ILIKE` across both direct `Transaction` and originating `ParentTx` transport fields (`plate_no`, `driver_name`).
+    - Added `ParentTx` outer join to `count_stmt` and `agg_stmt` to maintain relational consistency and performance across large datasets.
+  * Server-Side Excel Export (`backend/app/services/report.py`):
+    - Updated Trial Balance `.xlsx` openpyxl exporter headers to include dedicated `"Vehicle Plate No"` and `"Driver Name"` columns.
+    - Preserved full numeric cell formatting, borders, and aggregate total row formula ranges.
+  * Frontend Table UI (`frontend/src/features/reports/TrialBalancePage.tsx`):
+    - Split previous composite column into two dedicated, distinct table columns:
+      1. **Vehicle Plate No**: styled with a clean monospace badge and truck icon (`bg-slate-100 text-slate-800 border border-slate-200`) or `—` when null.
+      2. **Driver Name**: styled with clear medium text or `—` when null.
+    - Updated table `colSpan` to 15 for loading and empty state rows.
+    - Separated logistics details cleanly from supplier/requester/party info for scannability.
+  * Quality Gates & Verification:
+    - Added integration tests in `backend/tests/test_dual_references.py` and `backend/tests/test_reports.py` verifying transport resolution, search filtering, and Excel export column output.
+    - Full test suite passes: **305 tests passed** across 17 test modules (100% pass rate).
+    - Frontend production bundle built cleanly with 0 errors via Vite.
+
+## Current Phase
+
 Dual-Reference Tracking ("Voucher Ref #" & "Invoice / Waybill #") across GRV, SIV, ISTV, ISTRV Complete
 
 - Full Dual-Reference Tracking & Multi-Reference Ledger Search:
