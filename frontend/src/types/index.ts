@@ -163,6 +163,7 @@ export interface Transaction {
   received_by_name?: string | null
   approved_by_name?: string | null
   istv_no?: string | null
+  istrv_no?: string | null
   plate_no?: string | null
   driver_name?: string | null
   material_summary?: string | null
@@ -186,6 +187,13 @@ export interface TrialBalanceItem {
   transaction_number: string
   transaction_type: string
   reference_number?: string | null
+  invoice_no?: string | null
+  received_grv_no?: string | null
+  siv_no?: string | null
+  requested_no?: string | null
+  istv_no?: string | null
+  istrv_no?: string | null
+  external_reference?: string | null
   item_id: string
   item_code: string
   item_description: string
@@ -324,6 +332,8 @@ export interface InTransitReportItem {
   transfer_record_id: string
   istv_transaction_id?: string
   istv_number: string
+  istv_no?: string | null
+  invoice_no?: string | null
   transfer_date?: string
   transaction_date?: string
   source_warehouse_id?: string

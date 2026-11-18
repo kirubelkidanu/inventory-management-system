@@ -23,6 +23,7 @@ export interface InTransitFilterParams {
   source_warehouse_id?: string
   destination_warehouse_id?: string
   status?: string
+  search?: string
 }
 
 export interface StockBalancesFilterParams {
@@ -127,13 +128,13 @@ export function useExportTrialBalance() {
 }
 
 export function useInTransitReport(filters: InTransitFilterParams = {}) {
-  const { source_warehouse_id, destination_warehouse_id, status } = filters
+  const { source_warehouse_id, destination_warehouse_id, status, search } = filters
 
   return useQuery<InTransitReportItem[]>({
     queryKey: [
       'reports',
       'in-transit',
-      { source_warehouse_id, destination_warehouse_id, status },
+      { source_warehouse_id, destination_warehouse_id, status, search },
     ],
     queryFn: async () => {
       const params: Record<string, string> = {}
@@ -142,6 +143,7 @@ export function useInTransitReport(filters: InTransitFilterParams = {}) {
         params.destination_warehouse_id = destination_warehouse_id
       }
       if (status && status !== 'ALL') params.status = status
+      if (search && search.trim()) params.search = search.trim()
 
       const response = await api.get<InTransitReportItem[]>('/reports/in-transit', {
         params,

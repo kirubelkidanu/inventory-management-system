@@ -137,6 +137,8 @@ class FakeReportService:
         source_warehouse_id=None,
         destination_warehouse_id=None,
         status=None,
+        search=None,
+        **kwargs,
     ):
         item = InTransitReportItem(
             transfer_record_id=uuid4(),

@@ -73,6 +73,7 @@ class ISTVCreate(BaseModel):
     project_id: Optional[uuid.UUID] = None
     transaction_date: date = Field(default_factory=date.today)
     istv_no: Optional[str] = Field(None, max_length=100)
+    invoice_no: Optional[str] = Field(None, max_length=100)
     plate_no: Optional[str] = Field(None, max_length=100)
     driver_name: Optional[str] = Field(None, max_length=255)
     material_summary: Optional[str] = Field(None, max_length=255)
@@ -105,6 +106,8 @@ class ISTRVCreate(BaseModel):
     istv_transaction_id: uuid.UUID
     destination_warehouse_id: uuid.UUID
     transaction_date: date = Field(default_factory=date.today)
+    istrv_no: Optional[str] = Field(None, max_length=100)
+    invoice_no: Optional[str] = Field(None, max_length=100)
     remarks: Optional[str] = None
     lines: List[ISTRVLineCreate] = Field(..., min_length=1, description="At least one line required")
 
@@ -277,6 +280,7 @@ class TransactionRead(BaseModel):
     received_by_name: Optional[str] = None
     approved_by_name: Optional[str] = None
     istv_no: Optional[str] = None
+    istrv_no: Optional[str] = None
     plate_no: Optional[str] = None
     driver_name: Optional[str] = None
     material_summary: Optional[str] = None
@@ -308,6 +312,9 @@ class TransferLineRead(BaseModel):
 class TransferRecordRead(BaseModel):
     id: uuid.UUID
     istv_transaction_id: uuid.UUID
+    istv_number: Optional[str] = None
+    istv_no: Optional[str] = None
+    invoice_no: Optional[str] = None
     source_warehouse_id: uuid.UUID
     destination_warehouse_id: uuid.UUID
     plate_no: Optional[str] = None

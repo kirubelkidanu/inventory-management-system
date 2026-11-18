@@ -31,6 +31,7 @@ class ReportService:
             row.get("invoice_no")
             or row.get("siv_no")
             or row.get("istv_no")
+            or row.get("istrv_no")
             or row.get("received_grv_no")
             or row.get("requested_no")
             or row.get("external_reference")
@@ -68,6 +69,13 @@ class ReportService:
             transaction_number=row["transaction_number"],
             transaction_type=row["transaction_type"],
             reference_number=self._resolve_reference_number(row),
+            invoice_no=row.get("invoice_no"),
+            received_grv_no=row.get("received_grv_no"),
+            siv_no=row.get("siv_no"),
+            requested_no=row.get("requested_no"),
+            istv_no=row.get("istv_no"),
+            istrv_no=row.get("istrv_no"),
+            external_reference=row.get("external_reference"),
             item_id=row["item_id"],
             item_code=row["item_code"],
             item_description=row["item_description"],
@@ -388,18 +396,22 @@ class ReportService:
         source_warehouse_id: Optional[uuid.UUID] = None,
         destination_warehouse_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
+        search: Optional[str] = None,
     ) -> List[InTransitReportItem]:
         """Returns transfer items currently in transit with remaining quantities."""
         rows = await self.repo.get_in_transit_transfers(
             source_warehouse_id=source_warehouse_id,
             destination_warehouse_id=destination_warehouse_id,
             status=status,
+            search=search,
         )
         return [
             InTransitReportItem(
                 transfer_record_id=r["transfer_record_id"],
                 istv_transaction_id=r["istv_transaction_id"],
                 istv_number=r["istv_number"],
+                istv_no=r.get("istv_no"),
+                invoice_no=r.get("invoice_no"),
                 transaction_date=r["transaction_date"],
                 source_warehouse_id=r.get("source_warehouse_id"),
                 source_warehouse_name=r["source_warehouse_name"],

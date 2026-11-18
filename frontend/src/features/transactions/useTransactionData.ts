@@ -54,6 +54,7 @@ export interface ISTVCreatePayload {
   project_id?: string | null
   transaction_date: string
   istv_no?: string | null
+  invoice_no?: string | null
   plate_no?: string | null
   driver_name?: string | null
   material_summary?: string | null
@@ -72,6 +73,8 @@ export interface ISTRVCreatePayload {
   istv_transaction_id: string
   destination_warehouse_id: string
   transaction_date: string
+  istrv_no?: string | null
+  invoice_no?: string | null
   remarks?: string | null
   lines: ISTRVLineInput[]
 }

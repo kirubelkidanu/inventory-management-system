@@ -251,16 +251,40 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
               <strong className="text-slate-800 mt-0.5 block">{tx.supplier_name}</strong>
             </div>
           )}
-          {tx.invoice_no && (
-            <div>
-              <span className="text-slate-400 block">Invoice / Waybill #:</span>
-              <strong className="text-slate-800 font-mono mt-0.5 block">{tx.invoice_no}</strong>
-            </div>
-          )}
           {tx.received_grv_no && (
             <div>
               <span className="text-slate-400 block">Vendor GRV Ref #:</span>
               <strong className="text-slate-800 font-mono mt-0.5 block">{tx.received_grv_no}</strong>
+            </div>
+          )}
+          {tx.siv_no && (
+            <div>
+              <span className="text-slate-400 block">SIV Ref #:</span>
+              <strong className="text-slate-800 font-mono mt-0.5 block">{tx.siv_no}</strong>
+            </div>
+          )}
+          {tx.istv_no && (
+            <div>
+              <span className="text-slate-400 block">ISTV Voucher Ref #:</span>
+              <strong className="text-slate-800 font-mono mt-0.5 block">{tx.istv_no}</strong>
+            </div>
+          )}
+          {tx.istrv_no && (
+            <div>
+              <span className="text-slate-400 block">ISTRV Voucher Ref #:</span>
+              <strong className="text-slate-800 font-mono mt-0.5 block">{tx.istrv_no}</strong>
+            </div>
+          )}
+          {tx.external_reference && (
+            <div>
+              <span className="text-slate-400 block">External Ref:</span>
+              <strong className="text-slate-800 font-mono mt-0.5 block">{tx.external_reference}</strong>
+            </div>
+          )}
+          {tx.invoice_no && (
+            <div>
+              <span className="text-slate-400 block">Invoice / Waybill #:</span>
+              <strong className="text-slate-800 font-mono mt-0.5 block">{tx.invoice_no}</strong>
             </div>
           )}
           {tx.store_no && (

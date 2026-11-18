@@ -1,5 +1,47 @@
 ## Current Phase
 
+Dual-Reference Tracking ("Voucher Ref #" & "Invoice / Waybill #") across GRV, SIV, ISTV, ISTRV Complete
+
+- Full Dual-Reference Tracking & Multi-Reference Ledger Search:
+  * Database Schema Migration:
+    - Created and executed `database/migrations/007_add_istrv_no_and_reference_indexes.sql` on live Supabase PostgreSQL.
+    - Added `istrv_no VARCHAR(100) NULL` to `transactions`.
+    - Created B-tree performance indexes on `received_grv_no`, `istv_no`, `istrv_no`, `siv_no`, `requested_no`, and `external_reference` (`idx_transactions_received_grv_no`, `idx_transactions_istv_no`, `idx_transactions_istrv_no`, `idx_transactions_siv_no`, `idx_transactions_requested_no`, `idx_transactions_ext_ref`).
+  * Backend Models & Schemas:
+    - `Transaction` model in `app/models/transaction.py` and `app/models/all_models.py` updated with `istrv_no`.
+    - `TransferRecord` model updated with `istv_transaction` relation and properties `istv_number`, `istv_no`, `invoice_no`.
+    - Pydantic schemas updated:
+      * `ISTVCreate`: added `invoice_no?: Optional[str]`
+      * `ISTRVCreate`: added `istrv_no?: Optional[str]`, `invoice_no?: Optional[str]`
+      * `TransactionRead`: added `istrv_no?: Optional[str]`
+      * `TransferRecordRead`: added `istv_number`, `istv_no`, `invoice_no`
+      * `TrialBalanceItem`: added `invoice_no`, `received_grv_no`, `siv_no`, `requested_no`, `istv_no`, `istrv_no`, `external_reference`
+      * `InTransitReportItem`: added `istv_no`, `invoice_no`
+  * Services & Repositories:
+    - `TransactionService`:
+      * `create_and_post_istv`: persists `invoice_no` alongside `istv_no`.
+      * `create_and_post_istrv`: persists `istrv_no` and `invoice_no` (inheriting parent ISTV's `invoice_no` if omitted).
+    - `TransactionRepository.list_transactions`: updated multi-reference search to filter across `transaction_number`, `invoice_no`, `received_grv_no`, `siv_no`, `requested_no`, `istv_no`, `istrv_no`, `external_reference`, `supplier_name`, `plate_no`, `driver_name`, `remarks`.
+    - `ReportRepository`: Trial balance search filters across all reference columns; In-transit transfers query selects `istv_no`, `invoice_no` and filters by `search`.
+    - `ReportService`: Trial balance maps all individual reference columns and resolves primary reference; In-transit report supports `search` and includes `istv_no`, `invoice_no`.
+    - API routes: Exposed `search` query parameter on `/reports/in-transit` and `/transactions/transfers`.
+  * Frontend UI:
+    - `types/index.ts`: updated `Transaction`, `TrialBalanceItem`, `InTransitReportItem`.
+    - `useTransactionData.ts` & `useReportData.ts`: updated DTO payloads (`ISTVCreatePayload`, `ISTRVCreatePayload`, `InTransitFilterParams`).
+    - `ISTVPage.tsx`: added `Invoice / Waybill #` (`invoiceNo`) input next to `ISTV Voucher Ref #` (`istvNo`) and submitted in payload.
+    - `ISTRVPage.tsx`: added `ISTRV Voucher Ref #` (`istrvNo`) and `Invoice / Waybill #` (`invoiceNo`) inputs in header; auto-populates `invoice_no` from selected dispatch while remaining editable; displays voucher ref & invoice in dispatch select options and logistics card.
+    - `VoucherSuccessCard.tsx`: displays `received_grv_no`, `siv_no`, `requested_no`, `istv_no`, `istrv_no`, `external_reference`, and `invoice_no`.
+    - `TransactionsListPage.tsx`: displays both Voucher Ref # and Invoice/Req # in `Party / Reference` column and modal metadata grid.
+    - `TransactionDetailPage.tsx`: displays all voucher references in metadata header.
+    - `TrialBalancePage.tsx`: displays both Voucher Ref # and Invoice / Req # cleanly in the `Reference` column.
+    - `InTransitPage.tsx`: displays `istv_number` with `istv_no` and `invoice_no` subtext, and supports multi-reference search.
+  * Quality Gates & Verification:
+    - Added dedicated test suite `backend/tests/test_dual_references.py` testing ISTV dual-reference persistence, ISTRV dual-reference and invoice inheritance, trial balance resolution, and transfer record properties.
+    - Full test suite passes: **302 tests passed** across 17 test modules (100% pass rate).
+    - Frontend production bundle built cleanly with 0 errors via Vite.
+
+## Current Phase
+
 Searchable Item Master Combobox & Atomic Compensating Ledger Complete
 
 - Searchable Item Master Autocomplete/Combobox (`ItemSearchCombobox`):

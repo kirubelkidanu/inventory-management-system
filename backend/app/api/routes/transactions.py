@@ -141,6 +141,7 @@ async def create_adjustment(
 )
 async def list_in_transit_transfers(
     destination_warehouse_id: Optional[uuid.UUID] = Query(None),
+    search: Optional[str] = Query(None),
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -149,6 +150,7 @@ async def list_in_transit_transfers(
     return await rep_service.get_in_transit_report(
         destination_warehouse_id=destination_warehouse_id,
         status="IN_TRANSIT",
+        search=search,
     )
 
 

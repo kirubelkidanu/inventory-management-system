@@ -325,6 +325,7 @@ class Transaction(Base):
 
     # Physical ISTV voucher fields
     istv_no: Mapped[str | None] = mapped_column(String(100))
+    istrv_no: Mapped[str | None] = mapped_column(String(100))
     plate_no: Mapped[str | None] = mapped_column(String(100))
     driver_name: Mapped[str | None] = mapped_column(String(255))
     material_summary: Mapped[str | None] = mapped_column(String(255))

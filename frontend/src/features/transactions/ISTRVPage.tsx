@@ -33,6 +33,8 @@ export const ISTRVPage: React.FC = () => {
 
   const [selectedTransferId, setSelectedTransferId] = useState(initialIstvId)
   const [destinationWarehouseId, setDestinationWarehouseId] = useState('')
+  const [istrvNo, setIstrvNo] = useState('')
+  const [invoiceNo, setInvoiceNo] = useState('')
   const [transactionDate, setTransactionDate] = useState(
     new Date().toISOString().split('T')[0]
   )
@@ -81,6 +83,9 @@ export const ISTRVPage: React.FC = () => {
     const match = transferGroups.find((g) => g.recordId === recordId)
     if (match) {
       setDestinationWarehouseId(match.firstRow.destination_warehouse_id || '')
+      if (match.firstRow.invoice_no) {
+        setInvoiceNo(match.firstRow.invoice_no)
+      }
       // Populate lines with remaining quantities and inherited unit price
       const newLines: ISTRVLineForm[] = match.rows.map((r) => {
         const remQty = Number(r.remaining_quantity) || 0
@@ -242,6 +247,8 @@ export const ISTRVPage: React.FC = () => {
         istv_transaction_id: targetIstvId,
         destination_warehouse_id: destinationWarehouseId,
         transaction_date: transactionDate,
+        istrv_no: istrvNo.trim() || null,
+        invoice_no: invoiceNo.trim() || null,
         remarks: remarks.trim() || null,
         lines: lines.map((l) => ({
           item_id: l.item_id,
@@ -262,6 +269,8 @@ export const ISTRVPage: React.FC = () => {
     setPostedTransaction(null)
     setSelectedTransferId('')
     setDestinationWarehouseId('')
+    setIstrvNo('')
+    setInvoiceNo('')
     setRemarks('')
     setLines([
       {
@@ -345,9 +354,13 @@ export const ISTRVPage: React.FC = () => {
               </option>
               {transferGroups.map((group) => {
                 const f = group.firstRow
+                const refs = []
+                if (f.istv_no) refs.push(`Ref: ${f.istv_no}`)
+                if (f.invoice_no) refs.push(`Inv/WB: ${f.invoice_no}`)
+                const refSuffix = refs.length > 0 ? ` [${refs.join(' | ')}]` : ''
                 return (
                   <option key={group.recordId} value={group.recordId}>
-                    {f.istv_number} — {f.source_warehouse_name} &rarr; {f.destination_warehouse_name} ({f.plate_no || 'No Plate'} / {f.driver_name || 'Driver'}) — {group.rows.length} item(s)
+                    {f.istv_number}{refSuffix} — {f.source_warehouse_name} &rarr; {f.destination_warehouse_name} ({f.plate_no || 'No Plate'} / {f.driver_name || 'Driver'}) — {group.rows.length} item(s)
                   </option>
                 )
               })}
@@ -389,6 +402,28 @@ export const ISTRVPage: React.FC = () => {
             )}
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">ISTRV Voucher Ref #</label>
+            <input
+              type="text"
+              value={istrvNo}
+              onChange={(e) => setIstrvNo(e.target.value)}
+              placeholder="e.g. ISTRV-2026-0089"
+              className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-teal-500 focus:outline-hidden"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Invoice / Waybill #</label>
+            <input
+              type="text"
+              value={invoiceNo}
+              onChange={(e) => setInvoiceNo(e.target.value)}
+              placeholder="Auto-inherited or e.g. WB-8902"
+              className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-teal-500 focus:outline-hidden"
+            />
+          </div>
+
           <div className="sm:col-span-2">
             <label className="block text-xs font-semibold text-slate-700">Receiving Remarks / Notes</label>
             <input
@@ -408,7 +443,7 @@ export const ISTRVPage: React.FC = () => {
               <Truck className="h-4 w-4 text-teal-600" />
               <span>In-Transit Logistics Information</span>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs text-teal-800 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 text-xs text-teal-800 sm:grid-cols-3 lg:grid-cols-6">
               <div>
                 <span className="text-teal-600 block">Source Store:</span>
                 <strong>{selectedGroup.firstRow.source_warehouse_name}</strong>
@@ -425,6 +460,18 @@ export const ISTRVPage: React.FC = () => {
                 <span className="text-teal-600 block">Driver:</span>
                 <strong>{selectedGroup.firstRow.driver_name || 'N/A'}</strong>
               </div>
+              {selectedGroup.firstRow.istv_no && (
+                <div>
+                  <span className="text-teal-600 block">Originating Ref #:</span>
+                  <strong className="font-mono">{selectedGroup.firstRow.istv_no}</strong>
+                </div>
+              )}
+              {selectedGroup.firstRow.invoice_no && (
+                <div>
+                  <span className="text-teal-600 block">Invoice / Waybill:</span>
+                  <strong className="font-mono">{selectedGroup.firstRow.invoice_no}</strong>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -15,6 +15,13 @@ class TrialBalanceItem(BaseModel):
     transaction_number: str
     transaction_type: str
     reference_number: Optional[str] = None
+    invoice_no: Optional[str] = None
+    received_grv_no: Optional[str] = None
+    siv_no: Optional[str] = None
+    requested_no: Optional[str] = None
+    istv_no: Optional[str] = None
+    istrv_no: Optional[str] = None
+    external_reference: Optional[str] = None
     item_id: uuid.UUID
     item_code: str
     item_description: str
@@ -78,6 +85,8 @@ class InTransitReportItem(BaseModel):
     transfer_record_id: uuid.UUID
     istv_transaction_id: uuid.UUID
     istv_number: str
+    istv_no: Optional[str] = None
+    invoice_no: Optional[str] = None
     transaction_date: date
     source_warehouse_id: Optional[uuid.UUID] = None
     source_warehouse_name: str

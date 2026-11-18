@@ -32,6 +32,7 @@ export const ISTVPage: React.FC = () => {
   const [destWarehouseId, setDestWarehouseId] = useState('')
   const [projectId, setProjectId] = useState('')
   const [istvNo, setIstvNo] = useState('')
+  const [invoiceNo, setInvoiceNo] = useState('')
   const [plateNo, setPlateNo] = useState('')
   const [driverName, setDriverName] = useState('')
   const [materialSummary, setMaterialSummary] = useState('')
@@ -192,6 +193,7 @@ export const ISTVPage: React.FC = () => {
         project_id: projectId || null,
         transaction_date: transactionDate,
         istv_no: istvNo.trim() || null,
+        invoice_no: invoiceNo.trim() || null,
         plate_no: plateNo.trim() || null,
         driver_name: driverName.trim() || null,
         material_summary: materialSummary.trim() || null,
@@ -215,6 +217,7 @@ export const ISTVPage: React.FC = () => {
   const handleReset = () => {
     setPostedTransaction(null)
     setIstvNo('')
+    setInvoiceNo('')
     setPlateNo('')
     setDriverName('')
     setMaterialSummary('')
@@ -325,6 +328,17 @@ export const ISTVPage: React.FC = () => {
               value={istvNo}
               onChange={(e) => setIstvNo(e.target.value)}
               placeholder="e.g. ISTV-2026-0045"
+              className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-purple-500 focus:outline-hidden"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700">Invoice / Waybill #</label>
+            <input
+              type="text"
+              value={invoiceNo}
+              onChange={(e) => setInvoiceNo(e.target.value)}
+              placeholder="e.g. WB-8902 or INV-4501"
               className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-purple-500 focus:outline-hidden"
             />
           </div>

@@ -35,6 +35,7 @@ class Transaction(Base):
     received_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     approved_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     istv_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    istrv_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
     plate_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
     driver_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     material_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -111,6 +112,22 @@ class TransferRecord(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     lines = relationship("TransferLine", back_populates="transfer_record")
+    istv_transaction = relationship("Transaction", foreign_keys=[istv_transaction_id], lazy="selectin")
+
+    @property
+    def istv_number(self) -> str | None:
+        tx = getattr(self, "istv_transaction", None)
+        return getattr(tx, "transaction_number", None) if tx else None
+
+    @property
+    def istv_no(self) -> str | None:
+        tx = getattr(self, "istv_transaction", None)
+        return getattr(tx, "istv_no", None) if tx else None
+
+    @property
+    def invoice_no(self) -> str | None:
+        tx = getattr(self, "istv_transaction", None)
+        return getattr(tx, "invoice_no", None) if tx else None
 
 
 class TransferLine(Base):

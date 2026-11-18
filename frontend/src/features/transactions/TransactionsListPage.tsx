@@ -96,15 +96,6 @@ export const TransactionsListPage: React.FC = () => {
     return 'Central Warehouse'
   }
 
-  const formatPartyOrRef = (tx: Transaction) => {
-    if (tx.supplier_name) return tx.supplier_name
-    if (tx.project_dept) return `Dept: ${tx.project_dept}`
-    if (tx.plate_no) return `Veh: ${tx.plate_no}${tx.driver_name ? ` (${tx.driver_name})` : ''}`
-    if (tx.adjustment_reason) return tx.adjustment_reason
-    if (tx.remarks) return tx.remarks
-    return '—'
-  }
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -282,8 +273,32 @@ export const TransactionsListPage: React.FC = () => {
                     <td className="py-3.5 px-4 font-medium text-slate-800">
                       {formatLocation(tx)}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-600 max-w-xs truncate">
-                      {formatPartyOrRef(tx)}
+                    <td className="py-3.5 px-4 text-slate-600 max-w-xs">
+                      {(tx.supplier_name || tx.project_dept || tx.plate_no) && (
+                        <div className="font-medium text-slate-800 truncate">
+                          {tx.supplier_name || tx.project_dept || (tx.plate_no ? `${tx.plate_no}${tx.driver_name ? ` (${tx.driver_name})` : ''}` : '')}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5 font-mono text-[11px]">
+                        {(tx.received_grv_no || tx.siv_no || tx.istv_no || tx.istrv_no || tx.external_reference) && (
+                          <span className="inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-slate-700 font-medium" title="Physical Voucher Reference">
+                            Ref: {tx.received_grv_no || tx.siv_no || tx.istv_no || tx.istrv_no || tx.external_reference}
+                          </span>
+                        )}
+                        {tx.invoice_no && (
+                          <span className="inline-flex items-center rounded-md bg-sky-50 px-1.5 py-0.5 text-sky-700 font-medium border border-sky-100" title="Invoice / Waybill Number">
+                            Inv: {tx.invoice_no}
+                          </span>
+                        )}
+                        {tx.requested_no && (
+                          <span className="inline-flex items-center rounded-md bg-indigo-50 px-1.5 py-0.5 text-indigo-700 font-medium border border-indigo-100" title="Requisition Number">
+                            Req: {tx.requested_no}
+                          </span>
+                        )}
+                        {!tx.supplier_name && !tx.project_dept && !tx.plate_no && !tx.received_grv_no && !tx.siv_no && !tx.istv_no && !tx.istrv_no && !tx.invoice_no && !tx.requested_no && (
+                          <span className="text-slate-400">{tx.adjustment_reason || tx.remarks || '—'}</span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3.5 px-4 text-center font-mono">
                       {tx.lines?.length || 0}
@@ -355,9 +370,39 @@ export const TransactionsListPage: React.FC = () => {
                   <strong className="text-slate-800 mt-0.5 block">{selectedTx.supplier_name}</strong>
                 </div>
               )}
+              {selectedTx.received_grv_no && (
+                <div>
+                  <span className="text-slate-400 block">Vendor GRV Ref #:</span>
+                  <strong className="text-slate-800 font-mono mt-0.5 block">{selectedTx.received_grv_no}</strong>
+                </div>
+              )}
+              {selectedTx.siv_no && (
+                <div>
+                  <span className="text-slate-400 block">SIV Ref #:</span>
+                  <strong className="text-slate-800 font-mono mt-0.5 block">{selectedTx.siv_no}</strong>
+                </div>
+              )}
+              {selectedTx.istv_no && (
+                <div>
+                  <span className="text-slate-400 block">ISTV Voucher Ref #:</span>
+                  <strong className="text-slate-800 font-mono mt-0.5 block">{selectedTx.istv_no}</strong>
+                </div>
+              )}
+              {selectedTx.istrv_no && (
+                <div>
+                  <span className="text-slate-400 block">ISTRV Voucher Ref #:</span>
+                  <strong className="text-slate-800 font-mono mt-0.5 block">{selectedTx.istrv_no}</strong>
+                </div>
+              )}
+              {selectedTx.external_reference && (
+                <div>
+                  <span className="text-slate-400 block">External Ref:</span>
+                  <strong className="text-slate-800 font-mono mt-0.5 block">{selectedTx.external_reference}</strong>
+                </div>
+              )}
               {selectedTx.invoice_no && (
                 <div>
-                  <span className="text-slate-400 block">Invoice #:</span>
+                  <span className="text-slate-400 block">Invoice / Waybill #:</span>
                   <strong className="text-slate-800 font-mono mt-0.5 block">{selectedTx.invoice_no}</strong>
                 </div>
               )}

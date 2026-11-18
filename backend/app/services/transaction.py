@@ -460,6 +460,7 @@ class TransactionService:
                 destination_warehouse_id=payload.destination_warehouse_id,
                 warehouse_id=payload.source_warehouse_id,
                 project_id=payload.project_id,
+                invoice_no=payload.invoice_no,
                 istv_no=payload.istv_no,
                 plate_no=payload.plate_no,
                 driver_name=payload.driver_name,
@@ -693,6 +694,7 @@ class TransactionService:
             )
 
             # 7. Create Transaction header
+            eff_invoice_no = payload.invoice_no or (istv_tx.invoice_no if istv_tx else None)
             transaction = Transaction(
                 id=tx_id,
                 transaction_number=tx_number,
@@ -702,6 +704,8 @@ class TransactionService:
                 destination_warehouse_id=payload.destination_warehouse_id,
                 warehouse_id=payload.destination_warehouse_id,
                 reference_transaction_id=payload.istv_transaction_id,
+                invoice_no=eff_invoice_no,
+                istrv_no=payload.istrv_no,
                 remarks=payload.remarks,
                 created_by=parsed_user_id,
                 created_at=now_utc,

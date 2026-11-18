@@ -122,6 +122,7 @@ async def get_in_transit(
     source_warehouse_id: Optional[uuid.UUID] = Query(None, description="Filter by source warehouse ID"),
     destination_warehouse_id: Optional[uuid.UUID] = Query(None, description="Filter by destination warehouse ID"),
     status: Optional[str] = Query(None, description="Filter by status (e.g. IN_TRANSIT, PARTIALLY_RECEIVED, COMPLETED)"),
+    search: Optional[str] = Query(None, description="Search term for voucher number, invoice, plate, driver, or item"),
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: ReportService = Depends(get_report_service),
 ):
@@ -129,4 +130,5 @@ async def get_in_transit(
         source_warehouse_id=source_warehouse_id,
         destination_warehouse_id=destination_warehouse_id,
         status=status,
+        search=search,
     )

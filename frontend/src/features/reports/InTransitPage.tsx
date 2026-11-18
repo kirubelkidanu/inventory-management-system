@@ -24,17 +24,20 @@ export const InTransitPage: React.FC = () => {
     source_warehouse_id: sourceWarehouseId || undefined,
     destination_warehouse_id: destWarehouseId || undefined,
     status: statusFilter !== 'ALL' ? statusFilter : undefined,
+    search: search || undefined,
   }
 
   const { data: rawTransfers = [], isLoading, isFetching, refetch } = useInTransitReport(queryParams)
 
-  // Client search filter across ISTV #, plate, driver, or item code
+  // Client search filter across ISTV #, ref #, invoice #, plate, driver, or item code
   const transfers = React.useMemo(() => {
     if (!search.trim()) return rawTransfers
     const q = search.toLowerCase().trim()
     return rawTransfers.filter(
       (t) =>
         t.istv_number?.toLowerCase().includes(q) ||
+        t.istv_no?.toLowerCase().includes(q) ||
+        t.invoice_no?.toLowerCase().includes(q) ||
         t.plate_no?.toLowerCase().includes(q) ||
         t.driver_name?.toLowerCase().includes(q) ||
         t.item_code?.toLowerCase().includes(q) ||
@@ -130,7 +133,7 @@ export const InTransitPage: React.FC = () => {
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search ISTV #, plate, driver, or SKU..."
+              placeholder="Search ISTV #, ref #, invoice/waybill, plate, driver, or SKU..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-xs focus:border-slate-500 focus:outline-hidden"
@@ -223,8 +226,14 @@ export const InTransitPage: React.FC = () => {
                       <td className="py-3.5 px-4 whitespace-nowrap font-mono text-slate-600">
                         {item.transfer_date || item.transaction_date || '—'}
                       </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap font-mono font-bold text-purple-900">
-                        {item.istv_number}
+                      <td className="py-3.5 px-4 whitespace-nowrap font-mono">
+                        <div className="font-bold text-purple-900">{item.istv_number}</div>
+                        {(item.istv_no || item.invoice_no) && (
+                          <div className="text-[10px] text-slate-500 font-normal space-y-0.5 mt-0.5">
+                            {item.istv_no && <div>Ref: {item.istv_no}</div>}
+                            {item.invoice_no && <div>Inv/WB: {item.invoice_no}</div>}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <div className="font-semibold text-slate-800">{item.source_warehouse_name}</div>

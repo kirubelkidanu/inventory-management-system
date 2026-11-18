@@ -82,9 +82,45 @@ export const VoucherSuccessCard: React.FC<VoucherSuccessCardProps> = ({
                 <p className="text-sm font-semibold text-slate-800">{transaction.supplier_name}</p>
               </div>
             )}
+            {transaction.received_grv_no && (
+              <div>
+                <span className="text-xs font-medium text-slate-400">Vendor GRV Ref #</span>
+                <p className="text-sm font-mono text-slate-800">{transaction.received_grv_no}</p>
+              </div>
+            )}
+            {transaction.siv_no && (
+              <div>
+                <span className="text-xs font-medium text-slate-400">SIV Ref #</span>
+                <p className="text-sm font-mono text-slate-800">{transaction.siv_no}</p>
+              </div>
+            )}
+            {transaction.requested_no && (
+              <div>
+                <span className="text-xs font-medium text-slate-400">Requisition #</span>
+                <p className="text-sm font-mono text-slate-800">{transaction.requested_no}</p>
+              </div>
+            )}
+            {transaction.istv_no && (
+              <div>
+                <span className="text-xs font-medium text-slate-400">ISTV Voucher Ref #</span>
+                <p className="text-sm font-mono text-slate-800">{transaction.istv_no}</p>
+              </div>
+            )}
+            {transaction.istrv_no && (
+              <div>
+                <span className="text-xs font-medium text-slate-400">ISTRV Voucher Ref #</span>
+                <p className="text-sm font-mono text-slate-800">{transaction.istrv_no}</p>
+              </div>
+            )}
+            {transaction.external_reference && (
+              <div>
+                <span className="text-xs font-medium text-slate-400">External Ref</span>
+                <p className="text-sm font-mono text-slate-800">{transaction.external_reference}</p>
+              </div>
+            )}
             {transaction.invoice_no && (
               <div>
-                <span className="text-xs font-medium text-slate-400">Invoice No</span>
+                <span className="text-xs font-medium text-slate-400">Invoice / Waybill #</span>
                 <p className="text-sm font-mono text-slate-800">{transaction.invoice_no}</p>
               </div>
             )}

@@ -66,8 +66,12 @@ class ReportRepository:
                     Item.description.ilike(term),
                     Transaction.transaction_number.ilike(term),
                     Transaction.invoice_no.ilike(term),
+                    Transaction.received_grv_no.ilike(term),
                     Transaction.siv_no.ilike(term),
+                    Transaction.requested_no.ilike(term),
                     Transaction.istv_no.ilike(term),
+                    Transaction.istrv_no.ilike(term),
+                    Transaction.external_reference.ilike(term),
                     Transaction.plate_no.ilike(term),
                     Transaction.driver_name.ilike(term),
                 )
@@ -174,6 +178,7 @@ class ReportRepository:
                 Transaction.siv_no,
                 Transaction.requested_no,
                 Transaction.istv_no,
+                Transaction.istrv_no,
                 Transaction.external_reference,
                 Transaction.adjustment_reason,
                 Item.id.label("item_id"),
@@ -258,6 +263,7 @@ class ReportRepository:
                 Transaction.siv_no,
                 Transaction.requested_no,
                 Transaction.istv_no,
+                Transaction.istrv_no,
                 Transaction.external_reference,
                 Transaction.adjustment_reason,
                 Item.id.label("item_id"),
@@ -361,6 +367,7 @@ class ReportRepository:
         source_warehouse_id: Optional[uuid.UUID] = None,
         destination_warehouse_id: Optional[uuid.UUID] = None,
         status: Optional[str] = None,
+        search: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Queries in-transit transfers with remaining quantity tracking."""
         source_wh = aliased(Warehouse, name="source_wh")
@@ -375,6 +382,21 @@ class ReportRepository:
             )
         if status:
             conditions.append(TransferRecord.status == status)
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            conditions.append(
+                or_(
+                    Transaction.transaction_number.ilike(term),
+                    Transaction.istv_no.ilike(term),
+                    Transaction.invoice_no.ilike(term),
+                    TransferRecord.plate_no.ilike(term),
+                    TransferRecord.driver_name.ilike(term),
+                    Item.item_code.ilike(term),
+                    Item.description.ilike(term),
+                    source_wh.name.ilike(term),
+                    dest_wh.name.ilike(term),
+                )
+            )
 
         remaining_expr = (
             TransferLine.sent_quantity - TransferLine.received_quantity
@@ -385,6 +407,8 @@ class ReportRepository:
                 TransferRecord.id.label("transfer_record_id"),
                 TransferRecord.istv_transaction_id,
                 Transaction.transaction_number.label("istv_number"),
+                Transaction.istv_no.label("istv_no"),
+                Transaction.invoice_no.label("invoice_no"),
                 Transaction.transaction_date,
                 TransferRecord.source_warehouse_id,
                 source_wh.name.label("source_warehouse_name"),
