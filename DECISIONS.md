@@ -94,13 +94,15 @@ Inventory changes are explicitly controlled by TransactionService.
 
 ## ADR-008 — RLS
 
-Status: CURRENT DEVELOPMENT DECISION
+Status: APPROVED
 
-Supabase Row Level Security is currently disabled.
+Supabase Row Level Security (RLS) is enabled across all 14 `public` tables via `database/migrations/008_enable_rls.sql`:
+- `ENABLE ROW LEVEL SECURITY` on all 14 tables (`users`, `projects`, `warehouses`, `categories`, `items`, `inventory_balances`, `transactions`, `transaction_lines`, `stock_movements`, `transfer_records`, `transfer_lines`, `audit_logs`, `import_batches`, `import_errors`).
+- `REVOKE ALL` from `anon` on all 14 tables and `public.vw_reconciliation_discrepancies`.
+- `REVOKE INSERT, UPDATE, DELETE` from `authenticated` on all 14 tables.
+- `ALTER VIEW public.vw_reconciliation_discrepancies SET (security_invoker = true);`.
 
-RLS/security policy implementation will be addressed deliberately during the authentication and authorization phase.
-
-Do not enable RLS automatically without reviewing the application authorization architecture first.
+All reads, stock-changing writes, and RBAC enforcement continue to flow exclusively through the authenticated FastAPI backend using the privileged database connection, while direct PostgREST access from `anon` or client-side mutations via `authenticated` are blocked at the PostgreSQL layer.
 
 
 ---

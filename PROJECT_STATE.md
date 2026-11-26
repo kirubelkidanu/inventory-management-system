@@ -1,5 +1,22 @@
 ## Current Phase
 
+Database RLS Lockdown (`008_enable_rls.sql`) & Repository Sync Complete
+
+- **PostgreSQL / Supabase Row Level Security Lockdown (`database/migrations/008_enable_rls.sql`)**:
+  * Executed and verified on live Supabase PostgreSQL:
+    - Enabled `ROW LEVEL SECURITY` (`rowsecurity = true`) on all 14 `public` tables (`users`, `projects`, `warehouses`, `categories`, `items`, `inventory_balances`, `transactions`, `transaction_lines`, `stock_movements`, `transfer_records`, `transfer_lines`, `audit_logs`, `import_batches`, `import_errors`).
+    - Revoked all privileges from `anon` on all 14 tables and `public.vw_reconciliation_discrepancies`.
+    - Revoked `INSERT, UPDATE, DELETE` privileges from `authenticated` on all 14 tables.
+    - Configured `ALTER VIEW public.vw_reconciliation_discrepancies SET (security_invoker = true);`.
+  * Live verification results:
+    - `rowsecurity = true` confirmed across all 14 `public` tables.
+    - `anon` PostgREST requests return HTTP 401 with 0 rows exposed.
+  * Updated `DECISIONS.md` (`ADR-008 — RLS`) from `CURRENT DEVELOPMENT DECISION` to `APPROVED` referencing `database/migrations/008_enable_rls.sql`.
+- **Frontend Legacy Stub Cleanup**:
+  * Removed unreferenced mock stub `frontend/src/features/items/ItemsPage.tsx` and the empty `frontend/src/features/items/` directory (`App.tsx` routes `/items` to `frontend/src/features/inventory/ItemsPage.tsx`).
+
+## Current Phase
+
 Dedicated "Vehicle Plate No" & "Driver Name" Columns in Trial Balance Ledger & Excel Export Complete
 
 - Dedicated Transport Tracking in Trial Balance (`Vehicle Plate No` & `Driver Name`):
