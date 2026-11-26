@@ -195,9 +195,6 @@ CONSTRAINT chk_istrv_reference CHECK (
         AND destination_warehouse_id IS NOT NULL
     )
 ),
-CONSTRAINT chk_srv_reference CHECK (
-    transaction_type != 'SRV' OR reference_transaction_id IS NOT NULL
-),
 CONSTRAINT chk_adjustment_reason CHECK (
     transaction_type != 'ADJUSTMENT' OR adjustment_reason IS NOT NULL
 ),

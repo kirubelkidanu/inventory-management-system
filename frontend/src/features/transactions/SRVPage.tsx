@@ -10,7 +10,7 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 import { useWarehouses } from '@/features/inventory/useInventoryData'
-import { ItemCombobox } from '@/components/ItemCombobox'
+import { ItemSearchCombobox } from '@/components/ItemSearchCombobox'
 import {
   useProjects,
   useTransactions,
@@ -26,7 +26,8 @@ interface SRVLineForm {
   item_code: string
   item_description: string
   issued_quantity: number
-  remaining_returnable_quantity: number
+  remaining_returnable_quantity: number | null
+  is_from_siv: boolean
   quantity: string
   unit: string
   unit_price: number | null
@@ -63,10 +64,15 @@ export const SRVPage: React.FC = () => {
     isLoading: isLoadingReturnable
   } = useSIVReturnableItems(referenceSivId)
 
-  // Handle selecting an SIV from the list
+  // Handle selecting or clearing an SIV from the list
   const handleSelectSIV = (sivId: string) => {
+    const hadSiv = Boolean(referenceSivId.trim())
     setReferenceSivId(sivId)
     setErrorMessage(null)
+    if (!sivId.trim() && hadSiv) {
+      // Remove stale SIV-populated lines while preserving any custom lines added manually
+      setLines((prev) => prev.filter((l) => !l.is_from_siv))
+    }
   }
 
   // When returnable data is fetched, auto-populate warehouse, project, and lines
@@ -91,6 +97,7 @@ export const SRVPage: React.FC = () => {
             item_description: l.description || '',
             issued_quantity: issued,
             remaining_returnable_quantity: avail,
+            is_from_siv: true,
             // Default to remaining returnable quantity or 1
             quantity: String(avail > 0 ? (avail >= 1 ? 1 : avail) : 0),
             unit: l.unit || 'PCS',
@@ -133,9 +140,15 @@ export const SRVPage: React.FC = () => {
       if (item.default_unit) {
         updated[idx].unit = item.default_unit
       }
-      if (item.latest_unit_price) {
-        updated[idx].unit_price = Number(item.latest_unit_price)
-      }
+      updated[idx].unit_price =
+        item.latest_unit_price !== undefined && item.latest_unit_price !== null
+          ? Number(item.latest_unit_price)
+          : null
+    } else if (!newItemId) {
+      updated[idx].item_code = ''
+      updated[idx].item_description = ''
+      updated[idx].unit = 'PCS'
+      updated[idx].unit_price = null
     }
     setLines(updated)
   }
@@ -148,7 +161,8 @@ export const SRVPage: React.FC = () => {
         item_code: '',
         item_description: '',
         issued_quantity: 0,
-        remaining_returnable_quantity: 999999,
+        remaining_returnable_quantity: null,
+        is_from_siv: false,
         quantity: '1',
         unit: 'PCS',
         unit_price: null,
@@ -175,11 +189,11 @@ export const SRVPage: React.FC = () => {
     }, 0)
   }, [lines])
 
-  // Over-return and validation checks
+  // Over-return and validation checks (only enforced for SIV-capped lines)
   const hasOverReturn = useMemo(() => {
     return lines.some((l) => {
       const q = parseFloat(l.quantity) || 0
-      return l.remaining_returnable_quantity > 0 && q > l.remaining_returnable_quantity
+      return l.remaining_returnable_quantity !== null && q > l.remaining_returnable_quantity
     })
   }, [lines])
 
@@ -191,7 +205,6 @@ export const SRVPage: React.FC = () => {
   }, [lines])
 
   const isSubmitDisabled =
-    !referenceSivId.trim() ||
     !warehouseId ||
     lines.length === 0 ||
     hasOverReturn ||
@@ -202,11 +215,6 @@ export const SRVPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setErrorMessage(null)
-
-    if (!referenceSivId.trim()) {
-      setErrorMessage('A referenced Store Issue Voucher (SIV) ID is required.')
-      return
-    }
 
     if (!warehouseId) {
       setErrorMessage('Please select a receiving warehouse.')
@@ -229,7 +237,7 @@ export const SRVPage: React.FC = () => {
         setErrorMessage('All return quantities must be greater than zero.')
         return
       }
-      if (line.remaining_returnable_quantity > 0 && qty > line.remaining_returnable_quantity) {
+      if (line.remaining_returnable_quantity !== null && qty > line.remaining_returnable_quantity) {
         setErrorMessage(
           `Return quantity (${qty}) exceeds remaining returnable quantity (${line.remaining_returnable_quantity}) for item ${line.item_code || line.item_id}. Over-returning is strictly prohibited.`
         )
@@ -249,8 +257,9 @@ export const SRVPage: React.FC = () => {
     }
 
     try {
+      const trimmedSivId = referenceSivId.trim()
       const payload = {
-        reference_siv_id: referenceSivId.trim(),
+        reference_siv_id: trimmedSivId || null,
         warehouse_id: warehouseId,
         project_id: projectId || null,
         transaction_date: transactionDate,
@@ -307,7 +316,7 @@ export const SRVPage: React.FC = () => {
               Store Return Voucher (SRV)
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              Process returns of unused/surplus items back to inventory against an originating SIV. Auto-populates issued items, inherits unit prices, and enforces strict over-return prevention.
+              Process returns of unused/surplus items back to inventory. Optionally select a prior SIV to auto-populate returnable items with unit-price inheritance, or click &quot;+ Add Custom Line&quot; to return items directly without an SIV reference.
             </p>
           </div>
         </div>
@@ -341,11 +350,10 @@ export const SRVPage: React.FC = () => {
       <form onSubmit={handleSubmit} className="space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="sm:col-span-2">
-            <label className="block text-xs font-semibold text-slate-700">Reference Prior SIV Voucher *</label>
+            <label className="block text-xs font-semibold text-slate-700">Reference Prior SIV Voucher (Optional)</label>
             <select
               value={referenceSivId}
               onChange={(e) => handleSelectSIV(e.target.value)}
-              required
               disabled={isLoadingSIVs}
               className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm focus:border-rose-500 focus:outline-hidden"
             >
@@ -353,8 +361,8 @@ export const SRVPage: React.FC = () => {
                 {isLoadingSIVs
                   ? 'Loading SIV vouchers...'
                   : sivTransactions.length === 0
-                  ? 'No prior SIV vouchers found (enter ID manually)'
-                  : 'Select prior SIV voucher to auto-populate items...'}
+                  ? 'No prior SIV vouchers found (use "+ Add Custom Line" below)'
+                  : 'Optional: Select prior SIV voucher to auto-populate items...'}
               </option>
               {sivTransactions.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -411,12 +419,12 @@ export const SRVPage: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-700">Manual SIV ID (UUID fallback)</label>
+            <label className="block text-xs font-semibold text-slate-700">Manual SIV ID (Optional UUID fallback)</label>
             <input
               type="text"
               value={referenceSivId}
-              onChange={(e) => setReferenceSivId(e.target.value)}
-              placeholder="Paste SIV UUID if not listed above"
+              onChange={(e) => handleSelectSIV(e.target.value)}
+              placeholder="Optional: Paste SIV UUID if not listed above"
               className="mt-1 block w-full rounded-lg border border-slate-300 py-2 px-3 text-sm font-mono text-xs focus:border-rose-500 focus:outline-hidden"
             />
           </div>
@@ -474,7 +482,7 @@ export const SRVPage: React.FC = () => {
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Returned Items</h3>
               <p className="text-xs text-slate-500">
-                Return quantities are strictly validated against remaining returnable balances (Issued − Previously Returned).
+                When linked to a prior SIV, return quantities are validated against remaining returnable balances (Issued − Previously Returned). Direct returns without an SIV can be added via &quot;+ Add Custom Line&quot;.
               </p>
             </div>
             <button
@@ -497,7 +505,7 @@ export const SRVPage: React.FC = () => {
               ) : referenceSivId ? (
                 'No eligible returnable items found on this SIV (all issued quantities may have already been returned).'
               ) : (
-                'Select an SIV voucher above to auto-populate returnable line items.'
+                'Select a prior SIV voucher above to auto-populate returnable items, or click "+ Add Custom Line" to add returned items directly without an SIV reference.'
               )}
             </div>
           ) : (
@@ -520,12 +528,14 @@ export const SRVPage: React.FC = () => {
                     const qtyNum = parseFloat(line.quantity) || 0
                     const priceNum = line.unit_price || 0
                     const lineTotal = qtyNum * priceNum
-                    const isOver = line.remaining_returnable_quantity > 0 && qtyNum > line.remaining_returnable_quantity
+                    const isOver =
+                      line.remaining_returnable_quantity !== null &&
+                      qtyNum > line.remaining_returnable_quantity
 
                     return (
                       <tr key={idx} className={isOver ? 'bg-red-50/50' : 'hover:bg-slate-50/60'}>
                         <td className="py-2.5 px-3 min-w-[200px]">
-                          {line.item_code ? (
+                          {line.is_from_siv && line.item_code ? (
                             <div className="space-y-0.5">
                               <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-slate-800">
                                 {line.item_code}
@@ -535,13 +545,13 @@ export const SRVPage: React.FC = () => {
                               </div>
                             </div>
                           ) : (
-                            <ItemCombobox
+                            <ItemSearchCombobox
                               value={line.item_id}
                               onChange={(newItemId, selectedItem) =>
                                 handleItemChange(idx, newItemId, selectedItem)
                               }
                               required
-                              placeholder="Select SKU..."
+                              placeholder="Search SKU or description..."
                               excludeItemIds={lines
                                 .filter((_, i) => i !== idx)
                                 .map((l) => l.item_id)
@@ -566,7 +576,7 @@ export const SRVPage: React.FC = () => {
                           <input
                             type="number"
                             min="0.0001"
-                            max={line.remaining_returnable_quantity > 0 ? line.remaining_returnable_quantity : undefined}
+                            max={line.remaining_returnable_quantity !== null ? line.remaining_returnable_quantity : undefined}
                             step="any"
                             value={line.quantity}
                             onChange={(e) => handleLineQtyChange(idx, e.target.value)}
@@ -597,7 +607,7 @@ export const SRVPage: React.FC = () => {
                             step="0.01"
                             value={line.unit_price !== null ? line.unit_price : ''}
                             onChange={(e) => handleLinePriceChange(idx, e.target.value)}
-                            placeholder="Inherited"
+                            placeholder={line.is_from_siv ? 'Inherited' : 'Optional'}
                             className="w-24 text-right rounded-lg border border-slate-300 py-1.5 px-2 text-xs font-mono bg-slate-50 focus:bg-white focus:border-rose-500 focus:outline-hidden"
                           />
                         </td>

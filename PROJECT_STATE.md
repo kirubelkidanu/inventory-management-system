@@ -1,5 +1,23 @@
 ## Current Phase
 
+Optional SIV Reference on Store Return Vouchers (SRV / ADR-012) Complete
+
+- **Database Migration (`database/migrations/009_make_srv_siv_reference_optional.sql`)**:
+  * Created migration dropping `chk_srv_reference` on `public.transactions` (`ALTER TABLE public.transactions DROP CONSTRAINT IF EXISTS chk_srv_reference;`).
+  * **Pending Live Execution**: Not yet executed against live Supabase (owner to run in Supabase SQL Editor).
+- **Backend SRV Schema & Service (`backend/app/schemas/transaction.py`, `backend/app/services/transaction.py`)**:
+  * Made `reference_siv_id` optional (`Optional[uuid.UUID] = None`) on `SRVCreate`, normalizing empty/whitespace strings (`""`) to `None`.
+  * Updated `TransactionService.create_and_post_srv` to preserve all linked-SIV validations (`404`/`400`, item membership, cumulative over-return prevention, SIV unit-price inheritance, `project_id` fallback) when `reference_siv_id` is supplied, while supporting unlinked returns (`reference_siv_id = None`) with atomic balance locking, `IN` `stock_movements`, latest inbound unit-price fallback, and `POST` audit log (`reference_siv_id: None`).
+- **Frontend SRV Form (`frontend/src/features/transactions/SRVPage.tsx`, `frontend/src/features/transactions/useTransactionData.ts`)**:
+  * Updated `SRVCreatePayload.reference_siv_id` to `string | null`.
+  * Relabeled SIV selector to `Reference Prior SIV Voucher (Optional)` and removed the `required` constraint.
+  * Updated helper subtitles and empty-state guidance to describe both SIV-linked returns and direct custom line entry via `+ Add Custom Line` with `ItemSearchCombobox`.
+- **Documentation & Tests**:
+  * Added `ADR-012 — Optional SIV Reference on Store Return Vouchers (SRV)` in `DECISIONS.md` and updated `docs/DATABASE.md` and `docs/TRANSACTIONS.md`.
+  * Added unit/API tests for unlinked SRV creation in `backend/tests/test_adjustments_and_srv.py`.
+
+## Current Phase
+
 Database RLS Lockdown (`008_enable_rls.sql`) & Repository Sync Complete
 
 - **PostgreSQL / Supabase Row Level Security Lockdown (`database/migrations/008_enable_rls.sql`)**:

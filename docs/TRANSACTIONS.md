@@ -104,7 +104,7 @@ Validation:
 Flow:
 
 ```text
-Previous SIV
+Previous SIV (Optional) / Direct Return
     |
    SRV
     |
@@ -112,9 +112,9 @@ Previous SIV
 ```
 
 Validation:
-- original SIV reference where required
-- return quantity follows client rule
-- accepted quantity is positive
+- prior SIV reference is optional; when provided, validates that the SIV is posted, returned items belong to it, and cumulative returned quantities do not exceed issued quantities
+- when no prior SIV reference is provided, items may be returned directly to the receiving warehouse without SIV validation
+- accepted quantity is positive and items are unique per voucher
 
 ## ADJUSTMENT
 

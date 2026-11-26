@@ -187,3 +187,17 @@ Status: APPROVED
    - If all lines on a transaction become `is_voided == TRUE`, the parent transaction status transitions to `CANCELLED` (`cancelled_by`, `cancelled_at`, `cancellation_reason`).
 
 
+---
+
+## ADR-012 — Optional SIV Reference on Store Return Vouchers (SRV)
+
+Status: APPROVED
+
+1. Business Rule:
+   - Store Return Vouchers (`SRV`) may optionally reference a prior posted `SIV` (`reference_transaction_id`), or be posted directly without an SIV reference (`reference_siv_id = None` / `reference_transaction_id = NULL`).
+   - Database constraint `chk_srv_reference` on `public.transactions` is dropped via `database/migrations/009_make_srv_siv_reference_optional.sql`.
+
+2. Dual Validation Paths in `TransactionService.create_and_post_srv`:
+   - **When `reference_siv_id` IS provided**: All linked-return validations remain strictly enforced (referenced SIV exists, `transaction_type == 'SIV'`, `status == 'POSTED'`, returned items belong to the SIV, cumulative over-return prevention, SIV line unit-price inheritance, and `project_id` fallback from the SIV).
+   - **When `reference_siv_id` is `None`**: SIV lookup, line membership, and SIV over-return checks are skipped while preserving all core ledger invariants (non-empty lines, positive quantities, unique `item_id` per voucher per ADR-006, deterministic `SELECT ... FOR UPDATE` balance locking, atomic `inventory_balances` increment, immutable `IN` `stock_movements`, and `audit_logs` `POST` entry with `reference_siv_id: null`).
+

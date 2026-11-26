@@ -1208,3 +1208,128 @@ async def test_service_adjustment_omitted_unit_price_resolves_latest_inbound_cos
     assert len(saved_lines) == 1
     assert saved_lines[0].unit_price == Decimal("525.5000")
     assert initial_bal.quantity_on_hand == Decimal("13.0000")
+
+
+# ===========================================================================
+# 5. Optional SIV Reference on SRV Tests (ADR-012)
+# ===========================================================================
+
+
+def test_srv_schema_allows_omitted_or_empty_reference_siv_id():
+    wh_id = uuid4()
+    item_id = uuid4()
+
+    omitted = SRVCreate(
+        warehouse_id=wh_id,
+        lines=[SRVLineCreate(item_id=item_id, quantity=Decimal("2.0000"), unit="PCS")],
+    )
+    assert omitted.reference_siv_id is None
+    assert omitted.reference_transaction_id is None
+
+    empty_str = SRVCreate(
+        reference_siv_id="",
+        warehouse_id=wh_id,
+        lines=[SRVLineCreate(item_id=item_id, quantity=Decimal("2.0000"), unit="PCS")],
+    )
+    assert empty_str.reference_siv_id is None
+    assert empty_str.reference_transaction_id is None
+
+
+@pytest.mark.asyncio
+async def test_service_srv_without_reference_siv_succeeds():
+    mock_session = AsyncMock()
+    service = TransactionService(mock_session)
+
+    wh_id = uuid4()
+    project_id = uuid4()
+    item_id = uuid4()
+    user_id = uuid4()
+
+    initial_bal = InventoryBalance(
+        id=uuid4(),
+        warehouse_id=wh_id,
+        item_id=item_id,
+        quantity_on_hand=Decimal("10.0000"),
+        quantity_reserved=Decimal("0.0000"),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    service.repo.get_transaction_by_id = AsyncMock(return_value=None)
+    service.repo.lock_inventory_balances_for_update = AsyncMock(return_value={item_id: initial_bal})
+    service.repo.get_or_create_balance = AsyncMock(return_value=initial_bal)
+    service.repo.get_latest_inbound_unit_price = AsyncMock(return_value=Decimal("320.0000"))
+    service.repo.create_transaction = AsyncMock()
+    service.repo.create_transaction_lines = AsyncMock()
+    service.repo.create_stock_movement = AsyncMock()
+    service.repo.create_audit_log = AsyncMock()
+
+    payload = SRVCreate(
+        reference_siv_id=None,
+        warehouse_id=wh_id,
+        project_id=project_id,
+        remarks="Direct surplus return without prior SIV",
+        lines=[SRVLineCreate(item_id=item_id, quantity=Decimal("6.0000"), unit="BAG")],
+    )
+
+    result = await service.create_and_post_srv(user_id=user_id, payload=payload)
+
+    assert result.transaction_type == "SRV"
+    assert result.status == "POSTED"
+    assert result.reference_transaction_id is None
+    assert result.project_id == project_id
+    assert initial_bal.quantity_on_hand == Decimal("16.0000")
+
+    service.repo.get_latest_inbound_unit_price.assert_awaited_once_with(item_id, wh_id)
+    saved_lines = service.repo.create_transaction_lines.call_args[0][0]
+    assert len(saved_lines) == 1
+    assert saved_lines[0].unit_price == Decimal("320.0000")
+
+    service.repo.create_stock_movement.assert_called_once()
+    mov_kwargs = service.repo.create_stock_movement.call_args.kwargs
+    assert mov_kwargs["movement_type"] == "IN"
+    assert mov_kwargs["quantity"] == Decimal("6.0000")
+    assert mov_kwargs["running_balance"] == Decimal("16.0000")
+    assert mov_kwargs["project_id"] == project_id
+
+    service.repo.create_audit_log.assert_called_once()
+    audit_kwargs = service.repo.create_audit_log.call_args.kwargs
+    assert audit_kwargs["action"] == "POST"
+    assert audit_kwargs["after_state"]["reference_siv_id"] is None
+    mock_session.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ref_value", [None, ""])
+async def test_api_srv_without_reference_siv_returns_201(token_factory, ref_value):
+    fake_service = FakeTransactionService()
+    app.dependency_overrides[get_transaction_service] = lambda: fake_service
+    token = token_factory(role="STORE_KEEPER")
+
+    wh_id = str(uuid4())
+    item_id = str(uuid4())
+
+    payload = {
+        "reference_siv_id": ref_value,
+        "warehouse_id": wh_id,
+        "remarks": "Unlinked site return",
+        "lines": [{"item_id": item_id, "quantity": 4.0, "unit": "PCS", "unit_price": 150.0}],
+    }
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/transactions/srv",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    app.dependency_overrides.clear()
+    assert response.status_code == 201
+    data = response.json()
+    assert data["transaction_type"] == "SRV"
+    assert data["status"] == "POSTED"
+    assert data["reference_transaction_id"] is None
+    assert len(data["lines"]) == 1
+    assert len(fake_service.srv_calls) == 1
+    assert fake_service.srv_calls[0][1].reference_siv_id is None

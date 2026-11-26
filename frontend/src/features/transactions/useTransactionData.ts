@@ -88,7 +88,7 @@ export interface SRVLineInput {
 }
 
 export interface SRVCreatePayload {
-  reference_siv_id: string
+  reference_siv_id?: string | null
   warehouse_id: string
   project_id?: string | null
   transaction_date: string

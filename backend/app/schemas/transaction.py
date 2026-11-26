@@ -141,12 +141,15 @@ class SRVCreate(BaseModel):
     @classmethod
     def populate_reference(cls, values: Any) -> Any:
         if isinstance(values, dict):
-            ref = values.get("reference_siv_id") or values.get("reference_transaction_id")
-            if ref:
-                values["reference_siv_id"] = ref
-                values["reference_transaction_id"] = ref
-            elif not values.get("reference_siv_id") and not values.get("reference_transaction_id"):
-                raise ValueError("A referenced Store Issue Voucher (reference_siv_id or reference_transaction_id) is required.")
+            raw_siv = values.get("reference_siv_id")
+            raw_tx = values.get("reference_transaction_id")
+            if isinstance(raw_siv, str) and not raw_siv.strip():
+                raw_siv = None
+            if isinstance(raw_tx, str) and not raw_tx.strip():
+                raw_tx = None
+            ref = raw_siv or raw_tx
+            values["reference_siv_id"] = ref
+            values["reference_transaction_id"] = ref
         return values
 
     @field_validator("lines")
