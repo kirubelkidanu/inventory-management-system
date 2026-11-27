@@ -1,5 +1,23 @@
 ## Current Phase
 
+Trial Balance Remaining Qty, Moving Weighted Average Cost (WAC) & 2-Sheet Excel Export Complete
+
+- **Backend WAC & Remaining Stock Summary (`backend/app/schemas/report.py`, `backend/app/services/report.py`, `backend/app/repositories/report.py`)**:
+  * Extended `TrialBalanceItem` with `weighted_avg_unit_price` and `remaining_value`.
+  * Added `RemainingStockSummaryItem` and extended `TrialBalanceResponse` with `total_remaining_qty`, `total_remaining_value`, and `remaining_summary` (deduplicated per `(warehouse_id, item_id)`).
+  * Implemented chronological exact-`Decimal` Moving Weighted Average Cost computation across unpaginated filtered movements so pagination never skews `weighted_avg_unit_price` or `remaining_value`.
+- **2-Sheet Excel Export (`ReportService.export_trial_balance_excel`)**:
+  * **Sheet 1 (`Trial Balance`)**: Renamed `Running Bal` to `Remaining Qty`, added `Weighted Avg Price (ETB)` and `Remaining Value (ETB)` columns, and preserved `TOTAL` sums for `IN`, `OUT`, and `Total Value (ETB)` without double-counting remaining snapshots.
+  * **Sheet 2 (`Remaining Stock Summary`)**: Added deduplicated `(Warehouse, Item)` summary rows (`Item Code`, `Description`, `Category`, `Unit`, `WH Code`, `Warehouse Name`, `Project`, `Total IN`, `Total OUT`, `Remaining Qty`, `Weighted Avg Price (ETB)`, `Remaining Value (ETB)`) with a styled `TOTAL` row.
+- **Frontend UI (`frontend/src/features/reports/TrialBalancePage.tsx`, `frontend/src/types/index.ts`)**:
+  * Added **Remaining Stock Qty** and **Remaining Stock Value (ETB)** KPI cards alongside existing summary metrics.
+  * Added **Movement Ledger** vs **Remaining Stock Summary** view toggle with `Remaining Qty`, `Weighted Avg Price (ETB)`, `Remaining Value (ETB)`, and deduplicated grand totals.
+- **Tests & Docs**:
+  * Added unit tests in `backend/tests/test_reports.py` covering chronological WAC, pagination accuracy, unpriced rows, non-double-counted summary totals, and 2-sheet `.xlsx` verification.
+  * Added `ADR-013` in `DECISIONS.md` and updated `docs/REPORTS.md`.
+
+## Current Phase
+
 Optional SIV Reference on Store Return Vouchers (SRV / ADR-012) Complete
 
 - **Database Migration (`database/migrations/009_make_srv_siv_reference_optional.sql`)**:

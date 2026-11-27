@@ -213,7 +213,9 @@ class ReportRepository:
 
         stmt = (
             stmt.order_by(
-                StockMovement.movement_date.desc(), StockMovement.created_at.desc()
+                StockMovement.movement_date.desc(),
+                StockMovement.created_at.desc(),
+                StockMovement.id.desc(),
             )
             .limit(limit)
             .offset(offset)

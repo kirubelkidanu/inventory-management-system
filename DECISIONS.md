@@ -201,3 +201,20 @@ Status: APPROVED
    - **When `reference_siv_id` IS provided**: All linked-return validations remain strictly enforced (referenced SIV exists, `transaction_type == 'SIV'`, `status == 'POSTED'`, returned items belong to the SIV, cumulative over-return prevention, SIV line unit-price inheritance, and `project_id` fallback from the SIV).
    - **When `reference_siv_id` is `None`**: SIV lookup, line membership, and SIV over-return checks are skipped while preserving all core ledger invariants (non-empty lines, positive quantities, unique `item_id` per voucher per ADR-006, deterministic `SELECT ... FOR UPDATE` balance locking, atomic `inventory_balances` increment, immutable `IN` `stock_movements`, and `audit_logs` `POST` entry with `reference_siv_id: null`).
 
+
+---
+
+## ADR-013 — Trial Balance Weighted Average Valuation & Remaining Stock Summary
+
+Status: APPROVED
+
+1. Moving Weighted Average Cost (WAC):
+   - Calculated chronologically per `(warehouse_id, item_id)` across matching `stock_movements` using exact `Decimal` arithmetic (`(prev_qty * running_wac + qty * unit_price) / (prev_qty + qty)` on priced `IN` movements when `prev_qty > 0` and `running_wac` is set; otherwise `running_wac = unit_price` on priced `IN`, and unchanged on `OUT` or unpriced `IN` movements).
+   - Movement rows report `weighted_avg_unit_price` (4 decimals, or `NULL` if unpriced) and `remaining_value = (remaining_qty * running_wac).quantize(Decimal("0.01"))`.
+   - Paginated Trial Balance responses compute WAC across the full unpaginated filtered movement set so page slicing never skews valuation.
+
+2. Deduplicated Remaining Stock Summary:
+   - `TrialBalanceResponse` includes `remaining_summary` (one `RemainingStockSummaryItem` per distinct `(warehouse_id, item_id)` matching active filters) plus `total_remaining_qty` and `total_remaining_value` summed across distinct summary rows rather than across movement snapshots.
+   - Server-side `.xlsx` export provides two sheets: `Trial Balance` (movements with `Remaining Qty`, `Weighted Avg Price (ETB)`, and `Remaining Value (ETB)`) and `Remaining Stock Summary` (one row per `(Warehouse, Item)` plus grand `TOTAL` row).
+
+

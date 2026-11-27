@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.report import ReportRepository
 from app.schemas.report import (
     InTransitReportItem,
+    RemainingStockSummaryItem,
     StockBalanceItem,
     StockBalanceResponse,
     TrialBalanceItem,
@@ -38,7 +39,125 @@ class ReportService:
             or row.get("adjustment_reason")
         )
 
-    def _map_trial_balance_item(self, row: Dict[str, Any]) -> TrialBalanceItem:
+    def _compute_wac_and_summary(
+        self, all_rows: List[Dict[str, Any]]
+    ) -> tuple[
+        Dict[uuid.UUID, tuple[Optional[Decimal], Optional[Decimal]]],
+        List[RemainingStockSummaryItem],
+        Decimal,
+        Decimal,
+    ]:
+        """
+        Computes chronological Moving Weighted Average Cost (WAC) per (warehouse_id, item_id)
+        using exact Decimal arithmetic, plus the deduplicated RemainingStockSummaryItem list.
+        """
+        groups: Dict[tuple[Any, Any], List[Dict[str, Any]]] = {}
+        for row in all_rows:
+            key = (row["warehouse_id"], row["item_id"])
+            groups.setdefault(key, []).append(row)
+
+        per_movement: Dict[uuid.UUID, tuple[Optional[Decimal], Optional[Decimal]]] = {}
+        summary_items: List[RemainingStockSummaryItem] = []
+
+        for _, group_rows in groups.items():
+            ordered = sorted(
+                group_rows,
+                key=lambda r: (r["movement_date"], r["created_at"]),
+            )
+            running_qty = Decimal("0.0000")
+            running_wac: Optional[Decimal] = None
+            total_in = Decimal("0.0000")
+            total_out = Decimal("0.0000")
+            last_row: Optional[Dict[str, Any]] = None
+            last_remaining_qty = Decimal("0.0000")
+            last_wac: Optional[Decimal] = None
+            last_rem_val: Optional[Decimal] = None
+
+            for row in ordered:
+                movement_type = row.get("movement_type", "IN")
+                qty = Decimal(str(row.get("quantity", "0.0000")))
+                raw_unit_price = row.get("unit_price")
+                unit_price = (
+                    Decimal(str(raw_unit_price)) if raw_unit_price is not None else None
+                )
+                prev_qty = running_qty
+
+                if movement_type == "IN":
+                    total_in += qty
+                    if unit_price is not None:
+                        if running_wac is not None and prev_qty > Decimal("0"):
+                            running_wac = (
+                                (prev_qty * running_wac) + (qty * unit_price)
+                            ) / (prev_qty + qty)
+                        else:
+                            running_wac = unit_price
+                    next_qty_fallback = prev_qty + qty
+                else:
+                    total_out += qty
+                    next_qty_fallback = prev_qty - qty
+
+                raw_rb = row.get("running_balance")
+                remaining_qty = (
+                    Decimal(str(raw_rb)).quantize(Decimal("0.0001"))
+                    if raw_rb is not None
+                    else next_qty_fallback.quantize(Decimal("0.0001"))
+                )
+                running_qty = remaining_qty
+
+                wac_display = (
+                    running_wac.quantize(Decimal("0.0001"))
+                    if running_wac is not None
+                    else None
+                )
+                rem_val = (
+                    (remaining_qty * running_wac).quantize(Decimal("0.01"))
+                    if running_wac is not None
+                    else None
+                )
+
+                per_movement[row["movement_id"]] = (wac_display, rem_val)
+                last_row = row
+                last_remaining_qty = remaining_qty
+                last_wac = wac_display
+                last_rem_val = rem_val
+
+            if last_row is not None:
+                summary_items.append(
+                    RemainingStockSummaryItem(
+                        item_id=last_row["item_id"],
+                        item_code=last_row["item_code"],
+                        description=last_row["item_description"],
+                        category_name=last_row["category_name"],
+                        unit=last_row["unit"],
+                        warehouse_id=last_row["warehouse_id"],
+                        warehouse_code=last_row["warehouse_code"],
+                        warehouse_name=last_row["warehouse_name"],
+                        project_name=last_row.get("project_name"),
+                        total_in=total_in.quantize(Decimal("0.0001")),
+                        total_out=total_out.quantize(Decimal("0.0001")),
+                        remaining_qty=last_remaining_qty.quantize(Decimal("0.0001")),
+                        weighted_avg_unit_price=last_wac,
+                        remaining_value=last_rem_val,
+                    )
+                )
+
+        summary_items.sort(key=lambda s: (s.warehouse_code, s.item_code))
+        total_remaining_qty = sum(
+            (s.remaining_qty for s in summary_items),
+            Decimal("0.0000"),
+        ).quantize(Decimal("0.0001"))
+        total_remaining_value = sum(
+            (s.remaining_value for s in summary_items if s.remaining_value is not None),
+            Decimal("0.00"),
+        ).quantize(Decimal("0.01"))
+
+        return per_movement, summary_items, total_remaining_qty, total_remaining_value
+
+    def _map_trial_balance_item(
+        self,
+        row: Dict[str, Any],
+        wac_metrics: Optional[tuple[Optional[Decimal], Optional[Decimal]]] = None,
+    ) -> TrialBalanceItem:
         """Converts raw query dictionary into a validated TrialBalanceItem."""
         movement_type = row.get("movement_type", "IN")
         quantity = Decimal(str(row.get("quantity", "0.0000")))
@@ -60,6 +179,7 @@ class ReportService:
             if unit_price is not None
             else None
         )
+        wac_price, rem_value = wac_metrics if wac_metrics is not None else (None, None)
 
         return TrialBalanceItem(
             movement_id=row["movement_id"],
@@ -99,6 +219,8 @@ class ReportService:
             entered_by_name=row.get("entered_by_name", "System"),
             unit_price=unit_price,
             total_price=total_price,
+            weighted_avg_unit_price=wac_price,
+            remaining_value=rem_value,
         )
 
     async def get_trial_balance_report(
@@ -114,7 +236,7 @@ class ReportService:
         page: int = 1,
         page_size: int = 50,
     ) -> TrialBalanceResponse:
-        """Generates paginated Trial Balance response with aggregate sums."""
+        """Generates paginated Trial Balance response with chronological WAC and Remaining Stock Summary."""
         page = max(1, page)
         page_size = max(1, min(page_size, 500))
         offset = (page - 1) * page_size
@@ -132,7 +254,30 @@ class ReportService:
             offset=offset,
         )
 
-        items = [self._map_trial_balance_item(r) for r in rows]
+        # Fetch unpaginated filtered movements when results span multiple pages so
+        # chronological WAC and Remaining Stock Summary are never skewed by page slicing.
+        if offset == 0 and len(rows) >= total_count:
+            all_rows = rows
+        else:
+            all_rows = await self.repo.get_all_trial_balance_movements(
+                date_from=date_from,
+                date_to=date_to,
+                warehouse_id=warehouse_id,
+                project_id=project_id,
+                item_id=item_id,
+                category_id=category_id,
+                transaction_type=transaction_type,
+                search=search,
+            )
+
+        per_movement_wac, remaining_summary, total_remaining_qty, total_remaining_value = (
+            self._compute_wac_and_summary(all_rows)
+        )
+
+        items = [
+            self._map_trial_balance_item(r, per_movement_wac.get(r["movement_id"]))
+            for r in rows
+        ]
         total_valuation = sum(
             (item.total_price for item in items if item.total_price is not None),
             Decimal("0.0000"),
@@ -145,7 +290,23 @@ class ReportService:
             total_in=total_in,
             total_out=total_out,
             total_valuation=total_valuation,
+            total_remaining_qty=total_remaining_qty,
+            total_remaining_value=total_remaining_value,
+            remaining_summary=remaining_summary,
         )
+
+    def _auto_fit_columns(self, ws: Any) -> None:
+        """Auto-adjusts column widths based on cell lengths while skipping title banner rows."""
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                if cell.row in (1, 2):
+                    continue
+                val = cell.value
+                if val is not None:
+                    max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 10)
 
     async def export_trial_balance_excel(
         self,
@@ -159,8 +320,8 @@ class ReportService:
         search: Optional[str] = None,
     ) -> io.BytesIO:
         """
-        Exports the entire filtered trial balance to an Excel spreadsheet with styled
-        headers, auto-adjusted column widths, and aggregate formulas/totals.
+        Exports the filtered trial balance and deduplicated Remaining Stock Summary
+        into a formatted 2-sheet Excel workbook.
         """
         raw_rows = await self.repo.get_all_trial_balance_movements(
             date_from=date_from,
@@ -171,6 +332,9 @@ class ReportService:
             category_id=category_id,
             transaction_type=transaction_type,
             search=search,
+        )
+        per_movement_wac, remaining_summary, total_remaining_qty, total_remaining_value = (
+            self._compute_wac_and_summary(raw_rows)
         )
 
         wb = openpyxl.Workbook()
@@ -194,8 +358,8 @@ class ReportService:
             bottom=Side(style="double", color="000000"),
         )
 
-        # Title Block
-        ws.merge_cells("A1:T1")
+        # Sheet 1: Title Block (22 columns: A..V)
+        ws.merge_cells("A1:V1")
         title_cell = ws["A1"]
         title_cell.value = "DETAILED INVENTORY MOVEMENT / TRIAL BALANCE"
         title_cell.font = title_font
@@ -204,14 +368,14 @@ class ReportService:
 
         # Metadata Row
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        ws.merge_cells("A2:T2")
+        ws.merge_cells("A2:V2")
         sub_cell = ws["A2"]
         sub_cell.value = f"Generated: {generated_at} | Total Records: {len(raw_rows)}"
         sub_cell.font = Font(name="Calibri", size=10, italic=True, color="595959")
         sub_cell.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[2].height = 18
 
-        # Headers
+        # Sheet 1 Headers
         headers = [
             "Date",
             "Tx Number",
@@ -228,9 +392,11 @@ class ReportService:
             "Driver Name",
             "IN",
             "OUT",
-            "Running Bal",
+            "Remaining Qty",
             "Unit Price (ETB)",
             "Total Value (ETB)",
+            "Weighted Avg Price (ETB)",
+            "Remaining Value (ETB)",
             "Status",
             "Entered By",
         ]
@@ -252,7 +418,9 @@ class ReportService:
         sum_val = Decimal("0.0000")
 
         for row_dict in raw_rows:
-            item = self._map_trial_balance_item(row_dict)
+            item = self._map_trial_balance_item(
+                row_dict, per_movement_wac.get(row_dict["movement_id"])
+            )
             sum_in += item.in_quantity
             sum_out += item.out_quantity
             if item.total_price is not None:
@@ -277,6 +445,8 @@ class ReportService:
                 float(item.running_balance) if item.running_balance is not None else "",
                 float(item.unit_price) if item.unit_price is not None else "",
                 float(item.total_price) if item.total_price is not None else "",
+                float(item.weighted_avg_unit_price) if item.weighted_avg_unit_price is not None else "",
+                float(item.remaining_value) if item.remaining_value is not None else "",
                 item.status,
                 item.entered_by_name,
             ]
@@ -288,19 +458,18 @@ class ReportService:
                 cell = ws.cell(row=current_row, column=col_idx)
                 cell.border = thin_border
                 cell.font = Font(name="Calibri", size=10)
-                # Align numbers and format
                 if col_idx in (14, 15, 16):
                     cell.alignment = Alignment(horizontal="right", vertical="center")
                     cell.number_format = "#,##0.0000"
-                elif col_idx in (17, 18):
+                elif col_idx in (17, 18, 19, 20):
                     cell.alignment = Alignment(horizontal="right", vertical="center")
                     cell.number_format = "#,##0.00"
-                elif col_idx in (1, 3, 8, 9, 19):
+                elif col_idx in (1, 3, 8, 9, 21):
                     cell.alignment = Alignment(horizontal="center", vertical="center")
                 else:
                     cell.alignment = Alignment(horizontal="left", vertical="center")
 
-        # Total Row
+        # Sheet 1 Total Row (leave Remaining Qty / Remaining Value blank to avoid double-counting snapshots)
         total_row_idx = ws.max_row + 1
         ws.append(
             [
@@ -324,6 +493,8 @@ class ReportService:
                 float(sum_val),
                 "",
                 "",
+                "",
+                "",
             ]
         )
         ws.row_dimensions[total_row_idx].height = 22
@@ -343,17 +514,128 @@ class ReportService:
                 cell.alignment = Alignment(horizontal="right", vertical="center")
                 cell.number_format = "#,##0.00"
 
-        # Auto-adjust column widths
-        for col in ws.columns:
-            max_len = 0
-            col_letter = get_column_letter(col[0].column)
-            for cell in col:
-                if cell.row in (1, 2):  # skip merged header lines
-                    continue
-                val = cell.value
-                if val is not None:
-                    max_len = max(max_len, len(str(val)))
-            ws.column_dimensions[col_letter].width = max(max_len + 3, 10)
+        self._auto_fit_columns(ws)
+
+        # Sheet 2: Remaining Stock Summary (12 columns: A..L)
+        ws_summary = wb.create_sheet(title="Remaining Stock Summary")
+        ws_summary.merge_cells("A1:L1")
+        sum_title = ws_summary["A1"]
+        sum_title.value = "REMAINING STOCK SUMMARY & WEIGHTED AVERAGE VALUATION"
+        sum_title.font = title_font
+        sum_title.alignment = Alignment(horizontal="center", vertical="center")
+        ws_summary.row_dimensions[1].height = 28
+
+        ws_summary.merge_cells("A2:L2")
+        sum_sub = ws_summary["A2"]
+        sum_sub.value = (
+            f"Generated: {generated_at} | Distinct Items / Warehouses: {len(remaining_summary)}"
+        )
+        sum_sub.font = Font(name="Calibri", size=10, italic=True, color="595959")
+        sum_sub.alignment = Alignment(horizontal="center", vertical="center")
+        ws_summary.row_dimensions[2].height = 18
+
+        summary_headers = [
+            "Item Code",
+            "Description",
+            "Category",
+            "Unit",
+            "WH Code",
+            "Warehouse Name",
+            "Project",
+            "Total IN",
+            "Total OUT",
+            "Remaining Qty",
+            "Weighted Avg Price (ETB)",
+            "Remaining Value (ETB)",
+        ]
+        ws_summary.append([])  # blank row 3
+        ws_summary.append(summary_headers)  # row 4
+        ws_summary.row_dimensions[4].height = 24
+
+        for col_idx in range(1, len(summary_headers) + 1):
+            cell = ws_summary.cell(row=4, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+
+        sum_summary_in = Decimal("0.0000")
+        sum_summary_out = Decimal("0.0000")
+
+        for s in remaining_summary:
+            sum_summary_in += s.total_in
+            sum_summary_out += s.total_out
+            ws_summary.append(
+                [
+                    s.item_code,
+                    s.description,
+                    s.category_name,
+                    s.unit,
+                    s.warehouse_code,
+                    s.warehouse_name,
+                    s.project_name or "",
+                    float(s.total_in),
+                    float(s.total_out),
+                    float(s.remaining_qty),
+                    float(s.weighted_avg_unit_price)
+                    if s.weighted_avg_unit_price is not None
+                    else "",
+                    float(s.remaining_value) if s.remaining_value is not None else "",
+                ]
+            )
+            current_row = ws_summary.max_row
+            ws_summary.row_dimensions[current_row].height = 19
+            for col_idx in range(1, len(summary_headers) + 1):
+                cell = ws_summary.cell(row=current_row, column=col_idx)
+                cell.border = thin_border
+                cell.font = Font(name="Calibri", size=10)
+                if col_idx in (8, 9, 10):
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    cell.number_format = "#,##0.0000"
+                elif col_idx in (11, 12):
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    cell.number_format = "#,##0.00"
+                elif col_idx in (4, 5):
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+
+        sum_total_row = ws_summary.max_row + 1
+        ws_summary.append(
+            [
+                "TOTAL",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                float(sum_summary_in),
+                float(sum_summary_out),
+                float(total_remaining_qty),
+                "",
+                float(total_remaining_value),
+            ]
+        )
+        ws_summary.row_dimensions[sum_total_row].height = 22
+        ws_summary.merge_cells(f"A{sum_total_row}:G{sum_total_row}")
+        ws_summary[f"A{sum_total_row}"].alignment = Alignment(
+            horizontal="right", vertical="center"
+        )
+
+        for col_idx in range(1, len(summary_headers) + 1):
+            cell = ws_summary.cell(row=sum_total_row, column=col_idx)
+            cell.font = total_font
+            cell.fill = total_fill
+            cell.border = double_bottom_border
+            if col_idx in (8, 9, 10):
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                cell.number_format = "#,##0.0000"
+            elif col_idx == 12:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                cell.number_format = "#,##0.00"
+
+        self._auto_fit_columns(ws_summary)
 
         stream = io.BytesIO()
         wb.save(stream)

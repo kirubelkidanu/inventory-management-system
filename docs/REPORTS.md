@@ -32,10 +32,19 @@ Columns:
 - Transport Info (Plate No, Driver Name for transfers)
 - IN
 - OUT
-- Running Balance
+- Remaining Qty (`running_balance`)
+- Unit Price (ETB)
+- Total Value (ETB)
+- Weighted Avg Price (ETB) (chronological Moving Weighted Average Cost per warehouse & item)
+- Remaining Value (ETB) (`Remaining Qty * Weighted Avg Price`)
 - Status
 - Entered By / Authorized By
 - Created At
+
+Remaining Stock Summary (Sheet 2 in Excel export & Summary Tab in UI):
+- One deduplicated row per `(Warehouse, Item)` matching active filters:
+  - Item Code, Description, Category, Unit, WH Code, Warehouse Name, Project, Total IN, Total OUT, Remaining Qty, Weighted Avg Price (ETB), Remaining Value (ETB)
+- Grand totals sum distinct `(Warehouse, Item)` balances and remaining values without double-counting historical movement rows.
 
 Filters:
 - Date range

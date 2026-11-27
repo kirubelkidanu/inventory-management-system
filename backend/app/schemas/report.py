@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import List, Optional
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TrialBalanceItem(BaseModel):
@@ -41,6 +41,27 @@ class TrialBalanceItem(BaseModel):
     entered_by_name: str
     unit_price: Optional[Decimal] = None
     total_price: Optional[Decimal] = None
+    weighted_avg_unit_price: Optional[Decimal] = None
+    remaining_value: Optional[Decimal] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RemainingStockSummaryItem(BaseModel):
+    item_id: uuid.UUID
+    item_code: str
+    description: str
+    category_name: str
+    unit: str
+    warehouse_id: uuid.UUID
+    warehouse_code: str
+    warehouse_name: str
+    project_name: Optional[str] = None
+    total_in: Decimal
+    total_out: Decimal
+    remaining_qty: Decimal
+    weighted_avg_unit_price: Optional[Decimal] = None
+    remaining_value: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,6 +74,9 @@ class TrialBalanceResponse(BaseModel):
     total_in: Decimal
     total_out: Decimal
     total_valuation: Optional[Decimal] = None
+    total_remaining_qty: Decimal = Decimal("0.0000")
+    total_remaining_value: Decimal = Decimal("0.00")
+    remaining_summary: List[RemainingStockSummaryItem] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

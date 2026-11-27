@@ -714,3 +714,509 @@ async def test_service_trial_balance_renders_adjustment_quantity_unit_price_and_
     assert item_out.out_quantity == Decimal("4.0000")
     assert item_out.unit_price == Decimal("850.0000")
     assert item_out.total_price == Decimal("3400.0000")
+
+
+@pytest.mark.asyncio
+async def test_service_trial_balance_moving_wac_and_remaining_value():
+    """
+    Verifies chronological Moving Weighted Average Cost (WAC):
+    10 @ 100 ETB + 10 @ 200 ETB -> WAC = 150 ETB
+    Issue 5 -> Remaining Qty = 15, WAC = 150 ETB, Remaining Value = 2,250.00 ETB.
+    """
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    base_dt = datetime(2026, 9, 1, 8, 0, tzinfo=timezone.utc)
+
+    mov1 = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 9, 1),
+        "created_at": base_dt,
+        "transaction_id": uuid4(),
+        "transaction_number": "GRV-001",
+        "transaction_type": "GRV",
+        "invoice_no": "INV-001",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Portland Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "WH001",
+        "warehouse_name": "Main Warehouse",
+        "project_name": "Kazanchis",
+        "movement_type": "IN",
+        "quantity": Decimal("10.0000"),
+        "signed_quantity": Decimal("10.0000"),
+        "running_balance": Decimal("10.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Clerk",
+        "unit_price": Decimal("100.0000"),
+    }
+    mov2 = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 9, 2),
+        "created_at": base_dt + timedelta(days=1),
+        "transaction_id": uuid4(),
+        "transaction_number": "GRV-002",
+        "transaction_type": "GRV",
+        "invoice_no": "INV-002",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Portland Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "WH001",
+        "warehouse_name": "Main Warehouse",
+        "project_name": "Kazanchis",
+        "movement_type": "IN",
+        "quantity": Decimal("10.0000"),
+        "signed_quantity": Decimal("10.0000"),
+        "running_balance": Decimal("20.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Clerk",
+        "unit_price": Decimal("200.0000"),
+    }
+    mov3 = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 9, 3),
+        "created_at": base_dt + timedelta(days=2),
+        "transaction_id": uuid4(),
+        "transaction_number": "SIV-001",
+        "transaction_type": "SIV",
+        "siv_no": "SIV-101",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Portland Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "WH001",
+        "warehouse_name": "Main Warehouse",
+        "project_name": "Kazanchis",
+        "movement_type": "OUT",
+        "quantity": Decimal("5.0000"),
+        "signed_quantity": Decimal("-5.0000"),
+        "running_balance": Decimal("15.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Clerk",
+        "unit_price": Decimal("150.0000"),
+    }
+
+    desc_rows = [mov3, mov2, mov1]
+    service.repo.get_trial_balance = AsyncMock(
+        return_value=(desc_rows, 3, Decimal("20.0000"), Decimal("5.0000"))
+    )
+    service.repo.get_all_trial_balance_movements = AsyncMock(return_value=desc_rows)
+
+    res = await service.get_trial_balance_report(page=1, page_size=50)
+
+    # Order returned matches DESC ledger order: [mov3, mov2, mov1]
+    assert res.items[0].running_balance == Decimal("15.0000")
+    assert res.items[0].weighted_avg_unit_price == Decimal("150.0000")
+    assert res.items[0].remaining_value == Decimal("2250.00")
+
+    assert res.items[1].running_balance == Decimal("20.0000")
+    assert res.items[1].weighted_avg_unit_price == Decimal("150.0000")
+    assert res.items[1].remaining_value == Decimal("3000.00")
+
+    assert res.items[2].running_balance == Decimal("10.0000")
+    assert res.items[2].weighted_avg_unit_price == Decimal("100.0000")
+    assert res.items[2].remaining_value == Decimal("1000.00")
+
+    # Summary has 1 deduplicated row and exact grand totals
+    assert len(res.remaining_summary) == 1
+    summary_row = res.remaining_summary[0]
+    assert summary_row.total_in == Decimal("20.0000")
+    assert summary_row.total_out == Decimal("5.0000")
+    assert summary_row.remaining_qty == Decimal("15.0000")
+    assert summary_row.weighted_avg_unit_price == Decimal("150.0000")
+    assert summary_row.remaining_value == Decimal("2250.00")
+    assert res.total_remaining_qty == Decimal("15.0000")
+    assert res.total_remaining_value == Decimal("2250.00")
+
+
+@pytest.mark.asyncio
+async def test_service_trial_balance_pagination_preserves_chronological_wac():
+    """Ensures page slicing does not skew weighted_avg_unit_price or remaining_value."""
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    base_dt = datetime(2026, 9, 1, 8, 0, tzinfo=timezone.utc)
+
+    mov1 = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 9, 1),
+        "created_at": base_dt,
+        "transaction_id": uuid4(),
+        "transaction_number": "GRV-001",
+        "transaction_type": "GRV",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "WH001",
+        "warehouse_name": "Main WH",
+        "movement_type": "IN",
+        "quantity": Decimal("10.0000"),
+        "signed_quantity": Decimal("10.0000"),
+        "running_balance": Decimal("10.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Admin",
+        "unit_price": Decimal("100.0000"),
+    }
+    mov2 = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 9, 2),
+        "created_at": base_dt + timedelta(days=1),
+        "transaction_id": uuid4(),
+        "transaction_number": "GRV-002",
+        "transaction_type": "GRV",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "WH001",
+        "warehouse_name": "Main WH",
+        "movement_type": "IN",
+        "quantity": Decimal("10.0000"),
+        "signed_quantity": Decimal("10.0000"),
+        "running_balance": Decimal("20.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Admin",
+        "unit_price": Decimal("200.0000"),
+    }
+    mov3 = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 9, 3),
+        "created_at": base_dt + timedelta(days=2),
+        "transaction_id": uuid4(),
+        "transaction_number": "SIV-001",
+        "transaction_type": "SIV",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "WH001",
+        "warehouse_name": "Main WH",
+        "movement_type": "OUT",
+        "quantity": Decimal("5.0000"),
+        "signed_quantity": Decimal("-5.0000"),
+        "running_balance": Decimal("15.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Admin",
+        "unit_price": None,
+    }
+
+    # Page 2 with page_size=1 returns only mov2
+    service.repo.get_trial_balance = AsyncMock(
+        return_value=([mov2], 3, Decimal("20.0000"), Decimal("5.0000"))
+    )
+    service.repo.get_all_trial_balance_movements = AsyncMock(
+        return_value=[mov3, mov2, mov1]
+    )
+
+    res = await service.get_trial_balance_report(page=2, page_size=1)
+    assert len(res.items) == 1
+    assert res.items[0].transaction_number == "GRV-002"
+    # WAC reflects mov1 (10@100) + mov2 (10@200) = 150, NOT 200
+    assert res.items[0].weighted_avg_unit_price == Decimal("150.0000")
+    assert res.items[0].remaining_value == Decimal("3000.00")
+    assert res.total_remaining_qty == Decimal("15.0000")
+    assert res.total_remaining_value == Decimal("2250.00")
+
+
+@pytest.mark.asyncio
+async def test_service_trial_balance_unpriced_and_no_double_counting_totals():
+    """
+    Verifies unpriced items yield None for WAC/remaining_value without crashing,
+    and Remaining Stock Summary grand totals do not double-count items with multiple movements.
+    """
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+
+    wh_id = uuid4()
+    item_priced = uuid4()
+    item_unpriced = uuid4()
+    base_dt = datetime(2026, 9, 1, 8, 0, tzinfo=timezone.utc)
+
+    raw_rows = [
+        # Item 1 (priced, 2 movements): 10 @ 50 IN, then 2 OUT -> remaining 8 @ 50 = 400.00
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 9, 2),
+            "created_at": base_dt + timedelta(hours=2),
+            "transaction_id": uuid4(),
+            "transaction_number": "SIV-010",
+            "transaction_type": "SIV",
+            "item_id": item_priced,
+            "item_code": "01-CM-00001",
+            "item_description": "Cement",
+            "category_name": "CEMENT",
+            "unit": "BAG",
+            "warehouse_id": wh_id,
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main WH",
+            "movement_type": "OUT",
+            "quantity": Decimal("2.0000"),
+            "signed_quantity": Decimal("-2.0000"),
+            "running_balance": Decimal("8.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Admin",
+            "unit_price": None,
+        },
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 9, 1),
+            "created_at": base_dt,
+            "transaction_id": uuid4(),
+            "transaction_number": "GRV-010",
+            "transaction_type": "GRV",
+            "item_id": item_priced,
+            "item_code": "01-CM-00001",
+            "item_description": "Cement",
+            "category_name": "CEMENT",
+            "unit": "BAG",
+            "warehouse_id": wh_id,
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main WH",
+            "movement_type": "IN",
+            "quantity": Decimal("10.0000"),
+            "signed_quantity": Decimal("10.0000"),
+            "running_balance": Decimal("10.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Admin",
+            "unit_price": Decimal("50.0000"),
+        },
+        # Item 2 (unpriced, 2 movements): 12 IN (None price), 4 OUT -> remaining 8, WAC None
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 9, 2),
+            "created_at": base_dt + timedelta(hours=3),
+            "transaction_id": uuid4(),
+            "transaction_number": "SIV-011",
+            "transaction_type": "SIV",
+            "item_id": item_unpriced,
+            "item_code": "02-ST-00001",
+            "item_description": "Unpriced Rebar",
+            "category_name": "STEEL",
+            "unit": "PCS",
+            "warehouse_id": wh_id,
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main WH",
+            "movement_type": "OUT",
+            "quantity": Decimal("4.0000"),
+            "signed_quantity": Decimal("-4.0000"),
+            "running_balance": Decimal("8.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Admin",
+            "unit_price": None,
+        },
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 9, 1),
+            "created_at": base_dt + timedelta(hours=1),
+            "transaction_id": uuid4(),
+            "transaction_number": "GRV-011",
+            "transaction_type": "GRV",
+            "item_id": item_unpriced,
+            "item_code": "02-ST-00001",
+            "item_description": "Unpriced Rebar",
+            "category_name": "STEEL",
+            "unit": "PCS",
+            "warehouse_id": wh_id,
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main WH",
+            "movement_type": "IN",
+            "quantity": Decimal("12.0000"),
+            "signed_quantity": Decimal("12.0000"),
+            "running_balance": Decimal("12.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Admin",
+            "unit_price": None,
+        },
+    ]
+
+    service.repo.get_trial_balance = AsyncMock(
+        return_value=(raw_rows, 4, Decimal("22.0000"), Decimal("6.0000"))
+    )
+    service.repo.get_all_trial_balance_movements = AsyncMock(return_value=raw_rows)
+
+    res = await service.get_trial_balance_report(page=1, page_size=50)
+
+    assert len(res.remaining_summary) == 2
+    by_code = {s.item_code: s for s in res.remaining_summary}
+    assert by_code["01-CM-00001"].remaining_qty == Decimal("8.0000")
+    assert by_code["01-CM-00001"].weighted_avg_unit_price == Decimal("50.0000")
+    assert by_code["01-CM-00001"].remaining_value == Decimal("400.00")
+
+    assert by_code["02-ST-00001"].remaining_qty == Decimal("8.0000")
+    assert by_code["02-ST-00001"].weighted_avg_unit_price is None
+    assert by_code["02-ST-00001"].remaining_value is None
+
+    # Grand totals sum distinct (WH, Item) remaining quantities: 8 + 8 = 16 (not 8+10+8+12=38)
+    assert res.total_remaining_qty == Decimal("16.0000")
+    assert res.total_remaining_value == Decimal("400.00")
+
+
+@pytest.mark.asyncio
+async def test_service_export_trial_balance_excel_two_sheets_and_summary_totals():
+    """Verifies exported .xlsx contains both 'Trial Balance' and 'Remaining Stock Summary' sheets with accurate totals."""
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    base_dt = datetime(2026, 9, 1, 8, 0, tzinfo=timezone.utc)
+
+    raw_rows = [
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 9, 3),
+            "created_at": base_dt + timedelta(days=2),
+            "transaction_id": uuid4(),
+            "transaction_number": "SIV-001",
+            "transaction_type": "SIV",
+            "siv_no": "SIV-101",
+            "item_id": item_id,
+            "item_code": "01-CM-00001",
+            "item_description": "Portland Cement",
+            "category_name": "CEMENT",
+            "unit": "BAG",
+            "warehouse_id": wh_id,
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main Warehouse",
+            "project_name": "Kazanchis",
+            "movement_type": "OUT",
+            "quantity": Decimal("5.0000"),
+            "signed_quantity": Decimal("-5.0000"),
+            "running_balance": Decimal("15.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Store Keeper",
+            "unit_price": Decimal("150.0000"),
+        },
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 9, 2),
+            "created_at": base_dt + timedelta(days=1),
+            "transaction_id": uuid4(),
+            "transaction_number": "GRV-002",
+            "transaction_type": "GRV",
+            "invoice_no": "INV-002",
+            "item_id": item_id,
+            "item_code": "01-CM-00001",
+            "item_description": "Portland Cement",
+            "category_name": "CEMENT",
+            "unit": "BAG",
+            "warehouse_id": wh_id,
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main Warehouse",
+            "project_name": "Kazanchis",
+            "movement_type": "IN",
+            "quantity": Decimal("10.0000"),
+            "signed_quantity": Decimal("10.0000"),
+            "running_balance": Decimal("20.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Store Keeper",
+            "unit_price": Decimal("200.0000"),
+        },
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 9, 1),
+            "created_at": base_dt,
+            "transaction_id": uuid4(),
+            "transaction_number": "GRV-001",
+            "transaction_type": "GRV",
+            "invoice_no": "INV-001",
+            "item_id": item_id,
+            "item_code": "01-CM-00001",
+            "item_description": "Portland Cement",
+            "category_name": "CEMENT",
+            "unit": "BAG",
+            "warehouse_id": wh_id,
+            "warehouse_code": "WH001",
+            "warehouse_name": "Main Warehouse",
+            "project_name": "Kazanchis",
+            "movement_type": "IN",
+            "quantity": Decimal("10.0000"),
+            "signed_quantity": Decimal("10.0000"),
+            "running_balance": Decimal("10.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Store Keeper",
+            "unit_price": Decimal("100.0000"),
+        },
+    ]
+    service.repo.get_all_trial_balance_movements = AsyncMock(return_value=raw_rows)
+
+    excel_stream = await service.export_trial_balance_excel()
+    wb = openpyxl.load_workbook(excel_stream, data_only=True)
+
+    assert wb.sheetnames == ["Trial Balance", "Remaining Stock Summary"]
+
+    # Sheet 1 verification
+    ws1 = wb["Trial Balance"]
+    s1_headers = [cell.value for cell in ws1[4]]
+    assert "Remaining Qty" in s1_headers
+    assert "Running Bal" not in s1_headers
+    assert "Weighted Avg Price (ETB)" in s1_headers
+    assert "Remaining Value (ETB)" in s1_headers
+
+    # Row 5 is SIV-001 (idx 18 = WAC 150.0, idx 19 = Remaining Value 2250.0)
+    s1_row5 = [cell.value for cell in ws1[5]]
+    assert s1_row5[15] == 15.0
+    assert s1_row5[18] == 150.0
+    assert s1_row5[19] == 2250.0
+
+    # Sheet 1 TOTAL row (row 8): IN=20, OUT=5, Total Value=3750, Remaining Qty & Value blank
+    s1_total = [cell.value for cell in ws1[8]]
+    assert s1_total[13] == 20.0
+    assert s1_total[14] == 5.0
+    assert s1_total[15] in ("", None)
+    assert s1_total[17] == 3750.0
+    assert s1_total[19] in ("", None)
+
+    # Sheet 2 verification
+    ws2 = wb["Remaining Stock Summary"]
+    s2_headers = [cell.value for cell in ws2[4]]
+    assert s2_headers == [
+        "Item Code",
+        "Description",
+        "Category",
+        "Unit",
+        "WH Code",
+        "Warehouse Name",
+        "Project",
+        "Total IN",
+        "Total OUT",
+        "Remaining Qty",
+        "Weighted Avg Price (ETB)",
+        "Remaining Value (ETB)",
+    ]
+
+    # Data row 5 (1 deduplicated row)
+    s2_row5 = [cell.value for cell in ws2[5]]
+    assert s2_row5[0] == "01-CM-00001"
+    assert s2_row5[7] == 20.0
+    assert s2_row5[8] == 5.0
+    assert s2_row5[9] == 15.0
+    assert s2_row5[10] == 150.0
+    assert s2_row5[11] == 2250.0
+
+    # TOTAL row 6
+    s2_total = [cell.value for cell in ws2[6]]
+    assert s2_total[0] == "TOTAL"
+    assert s2_total[7] == 20.0
+    assert s2_total[8] == 5.0
+    assert s2_total[9] == 15.0
+    assert s2_total[11] == 2250.0

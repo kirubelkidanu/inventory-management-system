@@ -37,6 +37,7 @@ from app.schemas.reconciliation import (
 )
 from app.schemas.report import (
     InTransitReportItem,
+    RemainingStockSummaryItem,
     StockBalanceItem,
     StockBalanceResponse,
     TrialBalanceItem,
@@ -88,6 +89,7 @@ __all__ = [
     "PhysicalCountSubmitRequest",
     "ReconciliationCommitRequest",
     "ReconciliationPreviewResponse",
+    "RemainingStockSummaryItem",
     "SIVCreate",
     "SRVCreate",
     "SRVLineCreate",

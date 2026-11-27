@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import {
   Scale,
   Search,
@@ -18,6 +18,10 @@ import {
   ChevronRight,
   Banknote,
   Ban,
+  PackageCheck,
+  Wallet,
+  ListOrdered,
+  Layers,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useWarehouses, useCategories } from '@/features/inventory/useInventoryData'
@@ -29,6 +33,7 @@ import type { TransactionLine } from '@/types'
 export const TrialBalancePage: React.FC = () => {
   const { hasRole } = useAuth()
   // Filter states
+  const [activeView, setActiveView] = useState<'ledger' | 'summary'>('ledger')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
@@ -111,6 +116,17 @@ export const TrialBalancePage: React.FC = () => {
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total_count / pageSize)) : 1
 
+  const summaryRows = data?.remaining_summary || []
+  const summaryTotals = useMemo(() => {
+    return summaryRows.reduce(
+      (acc, r) => ({
+        totalIn: acc.totalIn + (Number(r.total_in) || 0),
+        totalOut: acc.totalOut + (Number(r.total_out) || 0),
+      }),
+      { totalIn: 0, totalOut: 0 }
+    )
+  }, [summaryRows])
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -124,7 +140,7 @@ export const TrialBalancePage: React.FC = () => {
               Stock Trial Balance & Movement Ledger
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              Authoritative chronological physical movements ledger with signed quantities and running snapshot balances.
+              Authoritative chronological physical movements ledger with signed quantities, remaining stock, and weighted average cost valuation.
             </p>
           </div>
         </div>
@@ -152,7 +168,7 @@ export const TrialBalancePage: React.FC = () => {
       </div>
 
       {/* Summary Stat Strip */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -169,7 +185,7 @@ export const TrialBalancePage: React.FC = () => {
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-              Total Inbound Receipts (IN)
+              Total Inbound (IN)
             </span>
             <ArrowDownLeft className="h-4 w-4 text-emerald-600" />
           </div>
@@ -182,7 +198,7 @@ export const TrialBalancePage: React.FC = () => {
         <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-rose-700">
-              Total Outbound Issues (OUT)
+              Total Outbound (OUT)
             </span>
             <ArrowUpRight className="h-4 w-4 text-rose-600" />
           </div>
@@ -190,6 +206,46 @@ export const TrialBalancePage: React.FC = () => {
             {isLoading ? '...' : Number(data?.total_out || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
           <span className="text-[11px] text-rose-600/80">Issued to projects or transferred</span>
+        </div>
+
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-indigo-700">
+              Remaining Stock Qty
+            </span>
+            <PackageCheck className="h-4 w-4 text-indigo-600" />
+          </div>
+          <p className="mt-2 text-2xl font-bold font-mono text-indigo-700">
+            {isLoading
+              ? '...'
+              : Number(data?.total_remaining_qty || 0).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+          </p>
+          <span className="text-[11px] text-indigo-600/80">
+            Across {summaryRows.length.toLocaleString()} item/store balance(s)
+          </span>
+        </div>
+
+        <div className="rounded-2xl border border-teal-200 bg-teal-50/50 p-5 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-teal-700">
+              Remaining Stock Value (ETB)
+            </span>
+            <Wallet className="h-4 w-4 text-teal-600" />
+          </div>
+          <p className="mt-2 text-2xl font-bold font-mono text-teal-700">
+            {isLoading
+              ? '...'
+              : data?.total_remaining_value !== null && data?.total_remaining_value !== undefined
+              ? Number(data.total_remaining_value).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })
+              : '—'}
+          </p>
+          <span className="text-[11px] text-teal-600/80">Weighted average valuation</span>
         </div>
 
         <div className="rounded-2xl border border-sky-200 bg-sky-50/50 p-5 shadow-xs">
@@ -370,179 +426,358 @@ export const TrialBalancePage: React.FC = () => {
         </div>
       </div>
 
-      {/* Authoritative Ledger Table */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
-            <thead className="bg-slate-50/80 font-semibold text-slate-600 uppercase tracking-wider text-[11px]">
-              <tr>
-                <th className="py-3 px-3.5 whitespace-nowrap">Date</th>
-                <th className="py-3 px-3.5 whitespace-nowrap">Transaction #</th>
-                <th className="py-3 px-3 whitespace-nowrap">Type</th>
-                <th className="py-3 px-3.5 whitespace-nowrap">Reference</th>
-                <th className="py-3 px-3.5">SKU & Item Description</th>
-                <th className="py-3 px-3 whitespace-nowrap">Category</th>
-                <th className="py-3 px-3 whitespace-nowrap">Warehouse / Project</th>
-                <th className="py-3 px-3 whitespace-nowrap">Vehicle Plate No</th>
-                <th className="py-3 px-3 whitespace-nowrap">Driver Name</th>
-                <th className="py-3 px-3.5 text-right whitespace-nowrap">IN (Qty)</th>
-                <th className="py-3 px-3.5 text-right whitespace-nowrap">OUT (Qty)</th>
-                <th className="py-3 px-3.5 text-right whitespace-nowrap">Running Bal</th>
-                <th className="py-3 px-3.5 text-right whitespace-nowrap">Unit Price (ETB)</th>
-                <th className="py-3 px-3.5 text-right whitespace-nowrap">Total Value (ETB)</th>
-                <th className="py-3 px-3 whitespace-nowrap">Entered By</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={15} className="py-16 text-center text-slate-400">
-                    <Loader2 className="mx-auto h-7 w-7 animate-spin text-slate-400 mb-2" />
-                    <span>Loading Trial Balance records...</span>
-                  </td>
-                </tr>
-              ) : !data || data.items.length === 0 ? (
-                <tr>
-                  <td colSpan={15} className="py-16 text-center text-slate-400">
-                    <Scale className="mx-auto h-8 w-8 text-slate-300 mb-2" />
-                    <p className="font-semibold text-slate-600">No stock movements found</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Try widening your date range or clearing filters.</p>
-                  </td>
-                </tr>
-              ) : (
-                data.items.map((row) => (
-                  <tr key={row.movement_id} className="hover:bg-slate-50/75 transition-colors">
-                    <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600">
-                      {row.movement_date}
-                    </td>
-                    <td className="py-3 px-3.5 whitespace-nowrap font-mono font-bold text-slate-900">
-                      <button
-                        onClick={() => setSelectedTxId(row.transaction_id)}
-                        className="hover:underline text-left text-slate-900 hover:text-sky-600 transition-colors"
-                      >
-                        {row.transaction_number}
-                      </button>
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getTypeBadge(row.transaction_type)}`}>
-                        {row.transaction_type}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600 max-w-[130px] truncate">
-                      {row.reference_number || '—'}
-                    </td>
-                    <td className="py-3 px-3.5 max-w-xs">
-                      <div className="font-mono font-semibold text-slate-900">{row.item_code}</div>
-                      <div className="text-slate-500 truncate text-[11px]">{row.item_description}</div>
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-slate-600">
-                      {row.category_name}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <div className="font-medium text-slate-800">{row.warehouse_name}</div>
-                      {row.project_name && (
-                        <div className="text-slate-400 text-[10px]">{row.project_name}</div>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      {row.plate_no ? (
-                        <div className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-slate-800 bg-slate-100 rounded-md px-2 py-0.5 border border-slate-200">
-                          <Truck className="h-3 w-3 text-slate-500" />
-                          <span>{row.plate_no}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-400 font-mono">—</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      {row.driver_name ? (
-                        <span className="font-medium text-slate-800">{row.driver_name}</span>
-                      ) : (
-                        <span className="text-slate-400 font-mono">—</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3.5 text-right font-mono font-bold text-emerald-600 whitespace-nowrap">
-                      {Number(row.in_quantity) > 0
-                        ? Number(row.in_quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })
-                        : '—'}
-                    </td>
-                    <td className="py-3 px-3.5 text-right font-mono font-bold text-rose-600 whitespace-nowrap">
-                      {Number(row.out_quantity) > 0
-                        ? Number(row.out_quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })
-                        : '—'}
-                    </td>
-                    <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
-                      {row.running_balance !== null && row.running_balance !== undefined
-                        ? Number(row.running_balance).toLocaleString(undefined, { minimumFractionDigits: 2 })
-                        : '—'}
-                    </td>
-                    <td className="py-3 px-3.5 text-right font-mono font-medium text-slate-800 whitespace-nowrap">
-                      {row.unit_price !== null && row.unit_price !== undefined
-                        ? Number(row.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                        : '—'}
-                    </td>
-                    <td className="py-3 px-3.5 text-right font-mono font-bold text-sky-700 whitespace-nowrap">
-                      {row.total_price !== null && row.total_price !== undefined
-                        ? Number(row.total_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                        : '—'}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-slate-600">
-                      {row.entered_by_name}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      {/* View Mode Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs">
+          <button
+            type="button"
+            onClick={() => setActiveView('ledger')}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${
+              activeView === 'ledger'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <ListOrdered className="h-3.5 w-3.5" />
+            <span>Movement Ledger</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-mono ${
+                activeView === 'ledger' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+              }`}
+            >
+              {(data?.total_count || 0).toLocaleString()}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveView('summary')}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${
+              activeView === 'summary'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Layers className="h-3.5 w-3.5" />
+            <span>Remaining Stock Summary</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-mono ${
+                activeView === 'summary' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+              }`}
+            >
+              {summaryRows.length.toLocaleString()}
+            </span>
+          </button>
         </div>
 
-        {/* Pagination Bar */}
-        {data && data.total_count > 0 && (
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-slate-200 px-4 py-3 gap-3 bg-slate-50/50 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500">Rows per page:</span>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value))
-                  setPage(1)
-                }}
-                className="rounded-lg border border-slate-300 py-1 px-2 text-xs bg-white focus:outline-hidden"
-              >
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
-              <span className="text-slate-500 ml-2">
-                Showing {Math.min((page - 1) * pageSize + 1, data.total_count)} to{' '}
-                {Math.min(page * pageSize, data.total_count)} of {data.total_count.toLocaleString()} movements
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500">
-                Page {page} of {totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-                className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
+        <p className="text-xs text-slate-500">
+          {activeView === 'ledger'
+            ? 'Chronological movements with moving weighted average cost (WAC) per warehouse & item.'
+            : 'Deduplicated net stock & weighted average valuation per (Warehouse, Item) matching active filters.'}
+        </p>
       </div>
+
+      {/* Authoritative Ledger Table OR Remaining Stock Summary Table */}
+      {activeView === 'ledger' ? (
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+              <thead className="bg-slate-50/80 font-semibold text-slate-600 uppercase tracking-wider text-[11px]">
+                <tr>
+                  <th className="py-3 px-3.5 whitespace-nowrap">Date</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap">Transaction #</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Type</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap">Reference</th>
+                  <th className="py-3 px-3.5">SKU & Item Description</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Category</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Warehouse / Project</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Vehicle Plate No</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Driver Name</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">IN (Qty)</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">OUT (Qty)</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Remaining Qty</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Unit Price (ETB)</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Total Value (ETB)</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Weighted Avg Price (ETB)</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Remaining Value (ETB)</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Entered By</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700">
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={17} className="py-16 text-center text-slate-400">
+                      <Loader2 className="mx-auto h-7 w-7 animate-spin text-slate-400 mb-2" />
+                      <span>Loading Trial Balance records...</span>
+                    </td>
+                  </tr>
+                ) : !data || data.items.length === 0 ? (
+                  <tr>
+                    <td colSpan={17} className="py-16 text-center text-slate-400">
+                      <Scale className="mx-auto h-8 w-8 text-slate-300 mb-2" />
+                      <p className="font-semibold text-slate-600">No stock movements found</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Try widening your date range or clearing filters.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  data.items.map((row) => (
+                    <tr key={row.movement_id} className="hover:bg-slate-50/75 transition-colors">
+                      <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600">
+                        {row.movement_date}
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap font-mono font-bold text-slate-900">
+                        <button
+                          onClick={() => setSelectedTxId(row.transaction_id)}
+                          className="hover:underline text-left text-slate-900 hover:text-sky-600 transition-colors"
+                        >
+                          {row.transaction_number}
+                        </button>
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getTypeBadge(row.transaction_type)}`}>
+                          {row.transaction_type}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap font-mono text-slate-600 max-w-[130px] truncate">
+                        {row.reference_number || '—'}
+                      </td>
+                      <td className="py-3 px-3.5 max-w-xs">
+                        <div className="font-mono font-semibold text-slate-900">{row.item_code}</div>
+                        <div className="text-slate-500 truncate text-[11px]">{row.item_description}</div>
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap text-slate-600">
+                        {row.category_name}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <div className="font-medium text-slate-800">{row.warehouse_name}</div>
+                        {row.project_name && (
+                          <div className="text-slate-400 text-[10px]">{row.project_name}</div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        {row.plate_no ? (
+                          <div className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-slate-800 bg-slate-100 rounded-md px-2 py-0.5 border border-slate-200">
+                            <Truck className="h-3 w-3 text-slate-500" />
+                            <span>{row.plate_no}</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 font-mono">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        {row.driver_name ? (
+                          <span className="font-medium text-slate-800">{row.driver_name}</span>
+                        ) : (
+                          <span className="text-slate-400 font-mono">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-emerald-600 whitespace-nowrap">
+                        {Number(row.in_quantity) > 0
+                          ? Number(row.in_quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-rose-600 whitespace-nowrap">
+                        {Number(row.out_quantity) > 0
+                          ? Number(row.out_quantity).toLocaleString(undefined, { minimumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                        {row.running_balance !== null && row.running_balance !== undefined
+                          ? Number(row.running_balance).toLocaleString(undefined, { minimumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-medium text-slate-800 whitespace-nowrap">
+                        {row.unit_price !== null && row.unit_price !== undefined
+                          ? Number(row.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-sky-700 whitespace-nowrap">
+                        {row.total_price !== null && row.total_price !== undefined
+                          ? Number(row.total_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-medium text-indigo-700 whitespace-nowrap">
+                        {row.weighted_avg_unit_price !== null && row.weighted_avg_unit_price !== undefined
+                          ? Number(row.weighted_avg_unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-teal-700 whitespace-nowrap">
+                        {row.remaining_value !== null && row.remaining_value !== undefined
+                          ? Number(row.remaining_value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap text-slate-600">
+                        {row.entered_by_name}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination Bar */}
+          {data && data.total_count > 0 && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-slate-200 px-4 py-3 gap-3 bg-slate-50/50 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Rows per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value))
+                    setPage(1)
+                  }}
+                  className="rounded-lg border border-slate-300 py-1 px-2 text-xs bg-white focus:outline-hidden"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+                <span className="text-slate-500 ml-2">
+                  Showing {Math.min((page - 1) * pageSize + 1, data.total_count)} to{' '}
+                  {Math.min(page * pageSize, data.total_count)} of {data.total_count.toLocaleString()} movements
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages}
+                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+              <thead className="bg-slate-50/80 font-semibold text-slate-600 uppercase tracking-wider text-[11px]">
+                <tr>
+                  <th className="py-3 px-3.5 whitespace-nowrap">Item Code</th>
+                  <th className="py-3 px-3.5">Description</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Category</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Unit</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Warehouse / Project</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Total IN</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Total OUT</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Remaining Qty</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Weighted Avg Price (ETB)</th>
+                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Remaining Value (ETB)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700">
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={10} className="py-16 text-center text-slate-400">
+                      <Loader2 className="mx-auto h-7 w-7 animate-spin text-slate-400 mb-2" />
+                      <span>Calculating Remaining Stock Summary...</span>
+                    </td>
+                  </tr>
+                ) : summaryRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="py-16 text-center text-slate-400">
+                      <Layers className="mx-auto h-8 w-8 text-slate-300 mb-2" />
+                      <p className="font-semibold text-slate-600">No summary rows found</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Try widening your date range or clearing filters.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  summaryRows.map((row) => (
+                    <tr key={`${row.warehouse_id}-${row.item_id}`} className="hover:bg-slate-50/75 transition-colors">
+                      <td className="py-3 px-3.5 whitespace-nowrap font-mono font-semibold text-slate-900">
+                        {row.item_code}
+                      </td>
+                      <td className="py-3 px-3.5 max-w-xs text-slate-700">
+                        {row.description}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap text-slate-600">
+                        {row.category_name}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap font-mono text-slate-600">
+                        {row.unit}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <div className="font-medium text-slate-800">
+                          <span className="font-mono text-[11px] text-slate-500 mr-1">{row.warehouse_code}</span>
+                          {row.warehouse_name}
+                        </div>
+                        {row.project_name && (
+                          <div className="text-slate-400 text-[10px]">{row.project_name}</div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-emerald-600 whitespace-nowrap">
+                        {Number(row.total_in).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-rose-600 whitespace-nowrap">
+                        {Number(row.total_out).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-indigo-700 whitespace-nowrap">
+                        {Number(row.remaining_qty).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-medium text-slate-800 whitespace-nowrap">
+                        {row.weighted_avg_unit_price !== null && row.weighted_avg_unit_price !== undefined
+                          ? Number(row.weighted_avg_unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-3.5 text-right font-mono font-bold text-teal-700 whitespace-nowrap">
+                        {row.remaining_value !== null && row.remaining_value !== undefined
+                          ? Number(row.remaining_value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {summaryRows.length > 0 && (
+                <tfoot className="bg-slate-100/90 border-t-2 border-slate-300 font-bold text-slate-900">
+                  <tr>
+                    <td colSpan={5} className="py-3 px-3.5 text-right uppercase tracking-wider text-[11px]">
+                      Grand Total ({summaryRows.length.toLocaleString()} item/warehouse row(s))
+                    </td>
+                    <td className="py-3 px-3.5 text-right font-mono text-emerald-700 whitespace-nowrap">
+                      {summaryTotals.totalIn.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-3 px-3.5 text-right font-mono text-rose-700 whitespace-nowrap">
+                      {summaryTotals.totalOut.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="py-3 px-3.5 text-right font-mono text-indigo-700 whitespace-nowrap">
+                      {Number(data?.total_remaining_qty || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="py-3 px-3.5 text-right font-mono text-slate-400 whitespace-nowrap">
+                      —
+                    </td>
+                    <td className="py-3 px-3.5 text-right font-mono text-teal-700 whitespace-nowrap">
+                      {Number(data?.total_remaining_value || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Transaction Inspection Modal */}
       {selectedTxId && (

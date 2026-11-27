@@ -213,6 +213,25 @@ export interface TrialBalanceItem {
   entered_by_name: string
   unit_price?: number | string | null
   total_price?: number | string | null
+  weighted_avg_unit_price?: number | string | null
+  remaining_value?: number | string | null
+}
+
+export interface RemainingStockSummaryItem {
+  item_id: string
+  item_code: string
+  description: string
+  category_name: string
+  unit: string
+  warehouse_id: string
+  warehouse_code: string
+  warehouse_name: string
+  project_name?: string | null
+  total_in: number | string
+  total_out: number | string
+  remaining_qty: number | string
+  weighted_avg_unit_price?: number | string | null
+  remaining_value?: number | string | null
 }
 
 export interface TrialBalanceResponse {
@@ -223,6 +242,9 @@ export interface TrialBalanceResponse {
   total_in: number | string
   total_out: number | string
   total_valuation?: number | string | null
+  total_remaining_qty?: number | string
+  total_remaining_value?: number | string
+  remaining_summary?: RemainingStockSummaryItem[]
 }
 
 export interface CountSheetItem {
