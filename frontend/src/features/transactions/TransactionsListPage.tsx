@@ -18,6 +18,8 @@ import {
   Clock,
   User,
   Ban,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { useWarehouses } from '@/features/inventory/useInventoryData'
@@ -30,12 +32,15 @@ export const TransactionsListPage: React.FC = () => {
   const [filterType, setFilterType] = useState('ALL')
   const [warehouseId, setWarehouseId] = useState('')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null)
   const [voidingLine, setVoidingLine] = useState<TransactionLine | null>(null)
 
+  const skip = (page - 1) * pageSize
   const { data: warehouses = [] } = useWarehouses()
   const {
-    data: transactions = [],
+    data: rawTransactions = [],
     isLoading,
     isFetching,
     refetch,
@@ -43,8 +48,12 @@ export const TransactionsListPage: React.FC = () => {
     transaction_type: filterType,
     warehouse_id: warehouseId || undefined,
     search: search || undefined,
-    limit: 100,
+    skip,
+    limit: pageSize + 1,
   })
+
+  const hasNextPage = rawTransactions.length > pageSize
+  const transactions = rawTransactions.slice(0, pageSize)
 
   const getStatusBadge = (status: string) => {
     switch (status?.toUpperCase()) {
@@ -169,7 +178,10 @@ export const TransactionsListPage: React.FC = () => {
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setFilterType(tab.id)}
+              onClick={() => {
+                setFilterType(tab.id)
+                setPage(1)
+              }}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                 filterType === tab.id
                   ? 'bg-slate-900 text-white shadow-xs'
@@ -189,7 +201,10 @@ export const TransactionsListPage: React.FC = () => {
               type="text"
               placeholder="Search voucher #, reference, supplier, plate, driver..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
               className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-xs focus:border-slate-500 focus:outline-hidden"
             />
           </div>
@@ -197,7 +212,10 @@ export const TransactionsListPage: React.FC = () => {
           <div className="w-56">
             <select
               value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
+              onChange={(e) => {
+                setWarehouseId(e.target.value)
+                setPage(1)
+              }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             >
               <option value="">All Warehouses</option>
@@ -225,14 +243,14 @@ export const TransactionsListPage: React.FC = () => {
           <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
             <thead className="bg-slate-50/75 text-xs font-semibold text-slate-600">
               <tr>
-                <th className="py-3 px-4">Voucher Number</th>
-                <th className="py-3 px-4">Type</th>
-                <th className="py-3 px-4">Date</th>
-                <th className="py-3 px-4">Warehouse / Routing</th>
-                <th className="py-3 px-4">Party / Reference</th>
-                <th className="py-3 px-4 text-center">Items</th>
-                <th className="py-3 px-4 text-center">Status</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Voucher Number</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Type</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Date</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Warehouse / Routing</th>
+                <th className="py-2.5 px-4">Party / Reference</th>
+                <th className="py-2.5 px-4 text-center whitespace-nowrap">Items</th>
+                <th className="py-2.5 px-4 text-center whitespace-nowrap">Status</th>
+                <th className="py-2.5 px-4 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
@@ -254,26 +272,26 @@ export const TransactionsListPage: React.FC = () => {
               ) : (
                 transactions.map((tx) => (
                   <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                    <td className="py-2.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
                       <button
                         onClick={() => setSelectedTx(tx)}
-                        className="hover:underline text-left text-slate-900 hover:text-sky-600 transition-colors"
+                        className="hover:underline text-left text-slate-900 hover:text-sky-600 transition-colors whitespace-nowrap"
                       >
                         {tx.transaction_number}
                       </button>
                     </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getTypeBadge(tx.transaction_type)}`}>
+                    <td className="py-2.5 px-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-bold ${getTypeBadge(tx.transaction_type)}`}>
                         {tx.transaction_type}
                       </span>
                     </td>
-                    <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
+                    <td className="py-2.5 px-4 text-slate-600 whitespace-nowrap font-mono">
                       {tx.transaction_date}
                     </td>
-                    <td className="py-3.5 px-4 font-medium text-slate-800">
+                    <td className="py-2.5 px-4 font-medium text-slate-800">
                       {formatLocation(tx)}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-600 max-w-xs">
+                    <td className="py-2.5 px-4 text-slate-600 max-w-xs">
                       {(tx.supplier_name || tx.project_dept || tx.plate_no) && (
                         <div className="font-medium text-slate-800 truncate">
                           {tx.supplier_name || tx.project_dept || (tx.plate_no ? `${tx.plate_no}${tx.driver_name ? ` (${tx.driver_name})` : ''}` : '')}
@@ -300,21 +318,21 @@ export const TransactionsListPage: React.FC = () => {
                         )}
                       </div>
                     </td>
-                    <td className="py-3.5 px-4 text-center font-mono">
+                    <td className="py-2.5 px-4 text-center font-mono whitespace-nowrap">
                       {tx.lines?.length || 0}
                     </td>
-                    <td className="py-3.5 px-4 text-center">
-                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${getStatusBadge(tx.status)}`}>
+                    <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                      <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${getStatusBadge(tx.status)}`}>
                         {tx.status}
                       </span>
                     </td>
-                    <td className="py-3.5 px-4 text-right">
+                    <td className="py-2.5 px-4 text-right whitespace-nowrap">
                       <button
                         onClick={() => setSelectedTx(tx)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50 transition-colors"
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-xs hover:bg-slate-50 transition-colors"
                       >
                         <Eye className="h-3.5 w-3.5 text-slate-500" />
-                        <span>Details</span>
+                        <span>View Details</span>
                       </button>
                     </td>
                   </tr>
@@ -323,6 +341,56 @@ export const TransactionsListPage: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Bar */}
+        {(transactions.length > 0 || page > 1) && (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-slate-200 px-4 py-3 gap-3 bg-slate-50/50 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">Rows per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value))
+                  setPage(1)
+                }}
+                className="rounded-lg border border-slate-300 py-1 px-2 text-xs bg-white focus:outline-hidden"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <span className="text-slate-500 ml-2">
+                {transactions.length > 0
+                  ? `Showing ${skip + 1}–${skip + transactions.length}${hasNextPage ? '+' : ''} vouchers`
+                  : `No vouchers on page ${page}`}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">Page {page}</span>
+              <button
+                type="button"
+                aria-label="Previous"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                <span>Previous</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Next"
+                onClick={() => setPage((p) => p + 1)}
+                disabled={!hasNextPage}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+              >
+                <span>Next</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Voucher Detail Modal */}

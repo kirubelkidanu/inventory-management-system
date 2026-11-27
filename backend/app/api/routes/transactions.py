@@ -196,7 +196,7 @@ async def list_transactions(
     warehouse_id: Optional[uuid.UUID] = Query(None, description="Filter by warehouse ID"),
     search: Optional[str] = Query(None, description="Search transaction number, supplier, invoice, plate, driver, remarks"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=500),
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: TransactionService = Depends(get_transaction_service),
 ):
