@@ -167,107 +167,126 @@ export const TrialBalancePage: React.FC = () => {
         </div>
       </div>
 
-      {/* Summary Stat Strip */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Filtered Records
-            </span>
-            <FileText className="h-4 w-4 text-slate-400" />
-          </div>
-          <p className="mt-2 text-2xl font-bold font-mono text-slate-900">
-            {isLoading ? '...' : (data?.total_count || 0).toLocaleString()}
-          </p>
-          <span className="text-[11px] text-slate-400">Total physical movements</span>
-        </div>
+      {/* Summary Stat Strip (3x2 grid on desktop) */}
+      {(() => {
+        const formatQty = (val?: number | string | null) =>
+          Number(val || 0).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })
+        const formatCurrency = (val?: number | string | null) =>
+          val !== null && val !== undefined
+            ? Number(val).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })
+            : '—'
 
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
-              Total Inbound (IN)
-            </span>
-            <ArrowDownLeft className="h-4 w-4 text-emerald-600" />
-          </div>
-          <p className="mt-2 text-2xl font-bold font-mono text-emerald-700">
-            {isLoading ? '...' : Number(data?.total_in || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </p>
-          <span className="text-[11px] text-emerald-600/80">Credited into warehouse stores</span>
-        </div>
+        const kpiCards = [
+          {
+            label: 'Filtered Records',
+            value: isLoading ? '...' : (data?.total_count || 0).toLocaleString(),
+            subtitle: 'Total physical movements',
+            icon: FileText,
+            cardClass: 'border-slate-200 bg-white',
+            labelClass: 'text-slate-500',
+            iconClass: 'text-slate-400',
+            valueClass: 'text-slate-900',
+            subClass: 'text-slate-400',
+          },
+          {
+            label: 'Total Inbound (IN)',
+            value: isLoading ? '...' : formatQty(data?.total_in),
+            subtitle: 'Credited into warehouse stores',
+            icon: ArrowDownLeft,
+            cardClass: 'border-emerald-200 bg-emerald-50/50',
+            labelClass: 'text-emerald-700',
+            iconClass: 'text-emerald-600',
+            valueClass: 'text-emerald-700',
+            subClass: 'text-emerald-600/80',
+          },
+          {
+            label: 'Total Outbound (OUT)',
+            value: isLoading ? '...' : formatQty(data?.total_out),
+            subtitle: 'Issued to projects or transferred',
+            icon: ArrowUpRight,
+            cardClass: 'border-rose-200 bg-rose-50/50',
+            labelClass: 'text-rose-700',
+            iconClass: 'text-rose-600',
+            valueClass: 'text-rose-700',
+            subClass: 'text-rose-600/80',
+          },
+          {
+            label: 'Remaining Stock Qty',
+            value: isLoading ? '...' : formatQty(data?.total_remaining_qty),
+            subtitle: `Across ${summaryRows.length.toLocaleString()} item/store balance(s)`,
+            icon: PackageCheck,
+            cardClass: 'border-indigo-200 bg-indigo-50/50',
+            labelClass: 'text-indigo-700',
+            iconClass: 'text-indigo-600',
+            valueClass: 'text-indigo-700',
+            subClass: 'text-indigo-600/80',
+          },
+          {
+            label: 'Remaining Stock Value (ETB)',
+            value: isLoading ? '...' : formatCurrency(data?.total_remaining_value),
+            subtitle: 'Weighted average valuation',
+            icon: Wallet,
+            cardClass: 'border-teal-200 bg-teal-50/50',
+            labelClass: 'text-teal-700',
+            iconClass: 'text-teal-600',
+            valueClass: 'text-teal-700',
+            subClass: 'text-teal-600/80',
+          },
+          {
+            label: 'Movement Valuation (ETB)',
+            value: isLoading ? '...' : formatCurrency(data?.total_valuation),
+            subtitle: 'Page movements valuation',
+            icon: Banknote,
+            cardClass: 'border-sky-200 bg-sky-50/50',
+            labelClass: 'text-sky-700',
+            iconClass: 'text-sky-600',
+            valueClass: 'text-sky-700',
+            subClass: 'text-sky-600/80',
+          },
+        ]
 
-        <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-rose-700">
-              Total Outbound (OUT)
-            </span>
-            <ArrowUpRight className="h-4 w-4 text-rose-600" />
+        return (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {kpiCards.map((card) => {
+              const Icon = card.icon
+              return (
+                <div
+                  key={card.label}
+                  className={`min-w-0 overflow-hidden rounded-2xl border p-5 shadow-xs ${card.cardClass}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      title={card.label}
+                      className={`truncate text-xs font-semibold uppercase tracking-wider ${card.labelClass}`}
+                    >
+                      {card.label}
+                    </span>
+                    <Icon className={`h-4 w-4 shrink-0 ${card.iconClass}`} />
+                  </div>
+                  <p
+                    title={card.value}
+                    className={`mt-2 truncate text-xl xl:text-2xl font-bold font-mono tabular-nums tracking-tight leading-tight ${card.valueClass}`}
+                  >
+                    {card.value}
+                  </p>
+                  <span
+                    title={card.subtitle}
+                    className={`mt-1 block truncate text-[11px] ${card.subClass}`}
+                  >
+                    {card.subtitle}
+                  </span>
+                </div>
+              )
+            })}
           </div>
-          <p className="mt-2 text-2xl font-bold font-mono text-rose-700">
-            {isLoading ? '...' : Number(data?.total_out || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </p>
-          <span className="text-[11px] text-rose-600/80">Issued to projects or transferred</span>
-        </div>
-
-        <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-indigo-700">
-              Remaining Stock Qty
-            </span>
-            <PackageCheck className="h-4 w-4 text-indigo-600" />
-          </div>
-          <p className="mt-2 text-2xl font-bold font-mono text-indigo-700">
-            {isLoading
-              ? '...'
-              : Number(data?.total_remaining_qty || 0).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
-          </p>
-          <span className="text-[11px] text-indigo-600/80">
-            Across {summaryRows.length.toLocaleString()} item/store balance(s)
-          </span>
-        </div>
-
-        <div className="rounded-2xl border border-teal-200 bg-teal-50/50 p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-teal-700">
-              Remaining Stock Value (ETB)
-            </span>
-            <Wallet className="h-4 w-4 text-teal-600" />
-          </div>
-          <p className="mt-2 text-2xl font-bold font-mono text-teal-700">
-            {isLoading
-              ? '...'
-              : data?.total_remaining_value !== null && data?.total_remaining_value !== undefined
-              ? Number(data.total_remaining_value).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })
-              : '—'}
-          </p>
-          <span className="text-[11px] text-teal-600/80">Weighted average valuation</span>
-        </div>
-
-        <div className="rounded-2xl border border-sky-200 bg-sky-50/50 p-5 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-sky-700">
-              Movement Valuation (ETB)
-            </span>
-            <Banknote className="h-4 w-4 text-sky-600" />
-          </div>
-          <p className="mt-2 text-2xl font-bold font-mono text-sky-700">
-            {isLoading
-              ? '...'
-              : data?.total_valuation !== null && data?.total_valuation !== undefined
-              ? Number(data.total_valuation).toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })
-              : '—'}
-          </p>
-          <span className="text-[11px] text-sky-600/80">Page movements valuation</span>
-        </div>
-      </div>
+        )
+      })()}
 
       {/* Comprehensive Filter Toolbar */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
