@@ -44,6 +44,8 @@ export const TrialBalancePage: React.FC = () => {
   const [searchInput, setSearchInput] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
+  const [summaryPage, setSummaryPage] = useState(1)
+  const [summaryPageSize, setSummaryPageSize] = useState(50)
 
   // Transaction detail inspection modal state
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null)
@@ -77,6 +79,7 @@ export const TrialBalancePage: React.FC = () => {
     e.preventDefault()
     setSearch(searchInput)
     setPage(1)
+    setSummaryPage(1)
   }
 
   const handleResetFilters = () => {
@@ -89,6 +92,7 @@ export const TrialBalancePage: React.FC = () => {
     setSearch('')
     setSearchInput('')
     setPage(1)
+    setSummaryPage(1)
   }
 
   const handleExportExcel = () => {
@@ -117,6 +121,14 @@ export const TrialBalancePage: React.FC = () => {
   const totalPages = data ? Math.max(1, Math.ceil(data.total_count / pageSize)) : 1
 
   const summaryRows = data?.remaining_summary || []
+  const totalSummaryRows = summaryRows.length
+  const totalSummaryPages = Math.max(1, Math.ceil(totalSummaryRows / summaryPageSize))
+  const safeSummaryPage = Math.min(summaryPage, totalSummaryPages)
+  const paginatedSummary = useMemo(() => {
+    const start = (safeSummaryPage - 1) * summaryPageSize
+    return summaryRows.slice(start, start + summaryPageSize)
+  }, [summaryRows, safeSummaryPage, summaryPageSize])
+
   const summaryTotals = useMemo(() => {
     return summaryRows.reduce(
       (acc, r) => ({
@@ -306,6 +318,7 @@ export const TrialBalancePage: React.FC = () => {
               onClick={() => {
                 setTxType(tab.id)
                 setPage(1)
+                setSummaryPage(1)
               }}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                 txType === tab.id
@@ -328,6 +341,7 @@ export const TrialBalancePage: React.FC = () => {
               onChange={(e) => {
                 setDateFrom(e.target.value)
                 setPage(1)
+                setSummaryPage(1)
               }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             />
@@ -341,6 +355,7 @@ export const TrialBalancePage: React.FC = () => {
               onChange={(e) => {
                 setDateTo(e.target.value)
                 setPage(1)
+                setSummaryPage(1)
               }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             />
@@ -353,6 +368,7 @@ export const TrialBalancePage: React.FC = () => {
               onChange={(e) => {
                 setWarehouseId(e.target.value)
                 setPage(1)
+                setSummaryPage(1)
               }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             >
@@ -372,6 +388,7 @@ export const TrialBalancePage: React.FC = () => {
               onChange={(e) => {
                 setProjectId(e.target.value)
                 setPage(1)
+                setSummaryPage(1)
               }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             >
@@ -391,6 +408,7 @@ export const TrialBalancePage: React.FC = () => {
               onChange={(e) => {
                 setCategoryId(e.target.value)
                 setPage(1)
+                setSummaryPage(1)
               }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             >
@@ -450,7 +468,10 @@ export const TrialBalancePage: React.FC = () => {
         <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs">
           <button
             type="button"
-            onClick={() => setActiveView('ledger')}
+            onClick={() => {
+              setActiveView('ledger')
+              setSummaryPage(1)
+            }}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${
               activeView === 'ledger'
                 ? 'bg-slate-900 text-white shadow-xs'
@@ -470,7 +491,10 @@ export const TrialBalancePage: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => setActiveView('summary')}
+            onClick={() => {
+              setActiveView('summary')
+              setSummaryPage(1)
+            }}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${
               activeView === 'summary'
                 ? 'bg-slate-900 text-white shadow-xs'
@@ -688,16 +712,16 @@ export const TrialBalancePage: React.FC = () => {
             <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
               <thead className="bg-slate-50/80 font-semibold text-slate-600 uppercase tracking-wider text-[11px]">
                 <tr>
-                  <th className="py-3 px-3.5 whitespace-nowrap">Item Code</th>
-                  <th className="py-3 px-3.5">Description</th>
-                  <th className="py-3 px-3 whitespace-nowrap">Category</th>
-                  <th className="py-3 px-3 whitespace-nowrap">Unit</th>
-                  <th className="py-3 px-3 whitespace-nowrap">Warehouse / Project</th>
-                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Total IN</th>
-                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Total OUT</th>
-                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Remaining Qty</th>
-                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Weighted Avg Price (ETB)</th>
-                  <th className="py-3 px-3.5 text-right whitespace-nowrap">Remaining Value (ETB)</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">Item Code</th>
+                  <th className="py-2.5 px-3">Description</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">Category</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">Unit</th>
+                  <th className="py-2.5 px-3 whitespace-nowrap">Warehouse / Project</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Total IN</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Total OUT</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Remaining Qty</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Weighted Avg Price (ETB)</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Remaining Value (ETB)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -708,7 +732,7 @@ export const TrialBalancePage: React.FC = () => {
                       <span>Calculating Remaining Stock Summary...</span>
                     </td>
                   </tr>
-                ) : summaryRows.length === 0 ? (
+                ) : totalSummaryRows === 0 ? (
                   <tr>
                     <td colSpan={10} className="py-16 text-center text-slate-400">
                       <Layers className="mx-auto h-8 w-8 text-slate-300 mb-2" />
@@ -717,21 +741,21 @@ export const TrialBalancePage: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  summaryRows.map((row) => (
+                  paginatedSummary.map((row) => (
                     <tr key={`${row.warehouse_id}-${row.item_id}`} className="hover:bg-slate-50/75 transition-colors">
-                      <td className="py-3 px-3.5 whitespace-nowrap font-mono font-semibold text-slate-900">
+                      <td className="py-2.5 px-3 whitespace-nowrap font-mono font-semibold text-slate-900">
                         {row.item_code}
                       </td>
-                      <td className="py-3 px-3.5 max-w-xs text-slate-700">
+                      <td className="py-2.5 px-3 min-w-[200px] max-w-xs text-slate-700">
                         {row.description}
                       </td>
-                      <td className="py-3 px-3 whitespace-nowrap text-slate-600">
+                      <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">
                         {row.category_name}
                       </td>
-                      <td className="py-3 px-3 whitespace-nowrap font-mono text-slate-600">
+                      <td className="py-2.5 px-3 whitespace-nowrap font-mono text-slate-600">
                         {row.unit}
                       </td>
-                      <td className="py-3 px-3 whitespace-nowrap">
+                      <td className="py-2.5 px-3 whitespace-nowrap">
                         <div className="font-medium text-slate-800">
                           <span className="font-mono text-[11px] text-slate-500 mr-1">{row.warehouse_code}</span>
                           {row.warehouse_name}
@@ -740,21 +764,21 @@ export const TrialBalancePage: React.FC = () => {
                           <div className="text-slate-400 text-[10px]">{row.project_name}</div>
                         )}
                       </td>
-                      <td className="py-3 px-3.5 text-right font-mono font-bold text-emerald-600 whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-emerald-600 whitespace-nowrap">
                         {Number(row.total_in).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="py-3 px-3.5 text-right font-mono font-bold text-rose-600 whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-rose-600 whitespace-nowrap">
                         {Number(row.total_out).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="py-3 px-3.5 text-right font-mono font-bold text-indigo-700 whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-indigo-700 whitespace-nowrap">
                         {Number(row.remaining_qty).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="py-3 px-3.5 text-right font-mono font-medium text-slate-800 whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-medium text-slate-800 whitespace-nowrap">
                         {row.weighted_avg_unit_price !== null && row.weighted_avg_unit_price !== undefined
                           ? Number(row.weighted_avg_unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                           : '—'}
                       </td>
-                      <td className="py-3 px-3.5 text-right font-mono font-bold text-teal-700 whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-teal-700 whitespace-nowrap">
                         {row.remaining_value !== null && row.remaining_value !== undefined
                           ? Number(row.remaining_value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                           : '—'}
@@ -763,28 +787,28 @@ export const TrialBalancePage: React.FC = () => {
                   ))
                 )}
               </tbody>
-              {summaryRows.length > 0 && (
+              {totalSummaryRows > 0 && (
                 <tfoot className="bg-slate-100/90 border-t-2 border-slate-300 font-bold text-slate-900">
                   <tr>
-                    <td colSpan={5} className="py-3 px-3.5 text-right uppercase tracking-wider text-[11px]">
-                      Grand Total ({summaryRows.length.toLocaleString()} item/warehouse row(s))
+                    <td colSpan={5} className="py-2.5 px-3 text-right uppercase tracking-wider text-[11px]">
+                      Grand Total ({totalSummaryRows.toLocaleString()} item/store balances)
                     </td>
-                    <td className="py-3 px-3.5 text-right font-mono text-emerald-700 whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-emerald-700 whitespace-nowrap">
                       {summaryTotals.totalIn.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
-                    <td className="py-3 px-3.5 text-right font-mono text-rose-700 whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-rose-700 whitespace-nowrap">
                       {summaryTotals.totalOut.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
-                    <td className="py-3 px-3.5 text-right font-mono text-indigo-700 whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-indigo-700 whitespace-nowrap">
                       {Number(data?.total_remaining_qty || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
                     </td>
-                    <td className="py-3 px-3.5 text-right font-mono text-slate-400 whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-right font-mono text-slate-400 whitespace-nowrap">
                       —
                     </td>
-                    <td className="py-3 px-3.5 text-right font-mono text-teal-700 whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-teal-700 whitespace-nowrap">
                       {Number(data?.total_remaining_value || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
@@ -795,6 +819,57 @@ export const TrialBalancePage: React.FC = () => {
               )}
             </table>
           </div>
+
+          {/* Summary Pagination Bar */}
+          {totalSummaryRows > 0 && (
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-slate-200 px-4 py-3 gap-3 bg-slate-50/50 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">Rows per page:</span>
+                <select
+                  value={summaryPageSize}
+                  onChange={(e) => {
+                    setSummaryPageSize(Number(e.target.value))
+                    setSummaryPage(1)
+                  }}
+                  className="rounded-lg border border-slate-300 py-1 px-2 text-xs bg-white focus:outline-hidden"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+                <span className="text-slate-500 ml-2">
+                  Showing {Math.min((safeSummaryPage - 1) * summaryPageSize + 1, totalSummaryRows)}–
+                  {Math.min(safeSummaryPage * summaryPageSize, totalSummaryRows)} of {totalSummaryRows.toLocaleString()} item/store balances
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">
+                  Page {safeSummaryPage} of {totalSummaryPages}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Previous"
+                  onClick={() => setSummaryPage((p) => Math.max(1, p - 1))}
+                  disabled={safeSummaryPage <= 1}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <span>Previous</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Next"
+                  onClick={() => setSummaryPage((p) => Math.min(totalSummaryPages, p + 1))}
+                  disabled={safeSummaryPage >= totalSummaryPages}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
