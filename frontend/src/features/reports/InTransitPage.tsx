@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Truck,
@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   ArrowRight,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { useWarehouses } from '@/features/inventory/useInventoryData'
 import { useInTransitReport, type InTransitFilterParams } from './useReportData'
@@ -17,6 +19,8 @@ export const InTransitPage: React.FC = () => {
   const [sourceWarehouseId, setSourceWarehouseId] = useState('')
   const [destWarehouseId, setDestWarehouseId] = useState('')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
 
   const { data: warehouses = [] } = useWarehouses()
 
@@ -30,7 +34,7 @@ export const InTransitPage: React.FC = () => {
   const { data: rawTransfers = [], isLoading, isFetching, refetch } = useInTransitReport(queryParams)
 
   // Client search filter across ISTV #, ref #, invoice #, plate, driver, or item code
-  const transfers = React.useMemo(() => {
+  const transfers = useMemo(() => {
     if (!search.trim()) return rawTransfers
     const q = search.toLowerCase().trim()
     return rawTransfers.filter(
@@ -44,6 +48,14 @@ export const InTransitPage: React.FC = () => {
         t.item_description?.toLowerCase().includes(q)
     )
   }, [rawTransfers, search])
+
+  const totalLines = transfers.length
+  const totalPages = Math.max(1, Math.ceil(totalLines / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const paginatedTransfers = useMemo(() => {
+    const start = (safePage - 1) * pageSize
+    return transfers.slice(start, start + pageSize)
+  }, [transfers, safePage, pageSize])
 
   const getStatusBadge = (status: string) => {
     switch (status?.toUpperCase()) {
@@ -115,7 +127,10 @@ export const InTransitPage: React.FC = () => {
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setStatusFilter(tab.id)}
+              onClick={() => {
+                setStatusFilter(tab.id)
+                setPage(1)
+              }}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                 statusFilter === tab.id
                   ? 'bg-slate-900 text-white shadow-xs'
@@ -135,7 +150,10 @@ export const InTransitPage: React.FC = () => {
               type="text"
               placeholder="Search ISTV #, ref #, invoice/waybill, plate, driver, or SKU..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
               className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-xs focus:border-slate-500 focus:outline-hidden"
             />
           </div>
@@ -143,7 +161,10 @@ export const InTransitPage: React.FC = () => {
           <div className="w-52">
             <select
               value={sourceWarehouseId}
-              onChange={(e) => setSourceWarehouseId(e.target.value)}
+              onChange={(e) => {
+                setSourceWarehouseId(e.target.value)
+                setPage(1)
+              }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             >
               <option value="">Origin (FROM): All</option>
@@ -158,7 +179,10 @@ export const InTransitPage: React.FC = () => {
           <div className="w-52">
             <select
               value={destWarehouseId}
-              onChange={(e) => setDestWarehouseId(e.target.value)}
+              onChange={(e) => {
+                setDestWarehouseId(e.target.value)
+                setPage(1)
+              }}
               className="w-full rounded-xl border border-slate-300 py-2 px-3 text-xs focus:border-slate-500 focus:outline-hidden"
             >
               <option value="">Destination (TO): All</option>
@@ -186,16 +210,16 @@ export const InTransitPage: React.FC = () => {
           <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
             <thead className="bg-slate-50/80 font-semibold text-slate-600 uppercase tracking-wider text-[11px]">
               <tr>
-                <th className="py-3.5 px-4 whitespace-nowrap">Dispatch Date</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">ISTV Number</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">Origin & Destination Route</th>
-                <th className="py-3.5 px-4 whitespace-nowrap">Vehicle & Driver</th>
-                <th className="py-3.5 px-4">Item SKU & Description</th>
-                <th className="py-3.5 px-4 text-right whitespace-nowrap">Dispatched</th>
-                <th className="py-3.5 px-4 text-right whitespace-nowrap">Received</th>
-                <th className="py-3.5 px-4 text-right whitespace-nowrap">Remaining In-Transit</th>
-                <th className="py-3.5 px-4 text-center whitespace-nowrap">Status</th>
-                <th className="py-3.5 px-4 text-right whitespace-nowrap">Action</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Dispatch Date</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">ISTV Number</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Origin & Destination Route</th>
+                <th className="py-2.5 px-4 whitespace-nowrap">Vehicle & Driver</th>
+                <th className="py-2.5 px-4">Item SKU & Description</th>
+                <th className="py-2.5 px-4 text-right whitespace-nowrap">Dispatched</th>
+                <th className="py-2.5 px-4 text-right whitespace-nowrap">Received</th>
+                <th className="py-2.5 px-4 text-right whitespace-nowrap">Remaining In-Transit</th>
+                <th className="py-2.5 px-4 text-center whitespace-nowrap">Status</th>
+                <th className="py-2.5 px-4 text-right whitespace-nowrap">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -206,7 +230,7 @@ export const InTransitPage: React.FC = () => {
                     <span>Loading in-transit logistics movements...</span>
                   </td>
                 </tr>
-              ) : transfers.length === 0 ? (
+              ) : totalLines === 0 ? (
                 <tr>
                   <td colSpan={10} className="py-16 text-center text-slate-400">
                     <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500 mb-2" />
@@ -215,7 +239,7 @@ export const InTransitPage: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                transfers.map((item) => {
+                paginatedTransfers.map((item) => {
                   const sentQty = Number(item.sent_quantity ?? item.dispatched_quantity ?? 0)
                   const recvQty = Number(item.received_quantity ?? 0)
                   const remQty = Number(item.remaining_quantity ?? 0)
@@ -223,69 +247,69 @@ export const InTransitPage: React.FC = () => {
 
                   return (
                     <tr key={`${item.transfer_record_id}-${item.item_id}`} className="hover:bg-slate-50/75 transition-colors">
-                      <td className="py-3.5 px-4 whitespace-nowrap font-mono text-slate-600">
+                      <td className="py-2.5 px-4 whitespace-nowrap font-mono text-slate-600">
                         {item.transfer_date || item.transaction_date || '—'}
                       </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap font-mono">
-                        <div className="font-bold text-purple-900">{item.istv_number}</div>
+                      <td className="py-2.5 px-4 whitespace-nowrap font-mono">
+                        <div className="font-bold text-purple-900 whitespace-nowrap">{item.istv_number}</div>
                         {(item.istv_no || item.invoice_no) && (
-                          <div className="text-[10px] text-slate-500 font-normal space-y-0.5 mt-0.5">
+                          <div className="text-[10px] text-slate-500 font-normal space-y-0.5 mt-0.5 whitespace-nowrap">
                             {item.istv_no && <div>Ref: {item.istv_no}</div>}
                             {item.invoice_no && <div>Inv/WB: {item.invoice_no}</div>}
                           </div>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap">
+                      <td className="py-2.5 px-4 whitespace-nowrap">
                         <div className="font-semibold text-slate-800">{item.source_warehouse_name}</div>
                         <div className="text-slate-400 flex items-center gap-1 text-[11px]">
                           <span>&rarr;</span>
                           <span>{item.destination_warehouse_name}</span>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <div className="font-mono text-slate-800 flex items-center gap-1 font-medium">
-                          <Truck className="h-3 w-3 text-slate-400" />
+                      <td className="py-2.5 px-4 whitespace-nowrap">
+                        <div className="font-mono text-slate-800 flex items-center gap-1 font-medium whitespace-nowrap">
+                          <Truck className="h-3 w-3 shrink-0 text-slate-400" />
                           <span>{item.plate_no || 'N/A'}</span>
                         </div>
                         {item.driver_name && (
                           <div className="text-slate-500 text-[11px]">{item.driver_name}</div>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 max-w-xs">
-                        <div className="font-mono font-semibold text-slate-900">{item.item_code}</div>
+                      <td className="py-2.5 px-4 max-w-xs">
+                        <div className="font-mono font-semibold text-slate-900 whitespace-nowrap">{item.item_code}</div>
                         <div className="text-slate-500 truncate text-[11px]">{item.item_description}</div>
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-medium text-slate-700 whitespace-nowrap">
+                      <td className="py-2.5 px-4 text-right font-mono tabular-nums font-medium text-slate-700 whitespace-nowrap">
                         {sentQty.toLocaleString(undefined, { minimumFractionDigits: 2 })} {item.unit}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono text-emerald-600 whitespace-nowrap">
+                      <td className="py-2.5 px-4 text-right font-mono tabular-nums text-emerald-600 whitespace-nowrap">
                         {recvQty.toLocaleString(undefined, { minimumFractionDigits: 2 })} {item.unit}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-bold whitespace-nowrap">
+                      <td className="py-2.5 px-4 text-right font-mono tabular-nums font-bold whitespace-nowrap">
                         {isPending ? (
-                          <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700 border border-amber-200">
+                          <span className="inline-flex items-center whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-amber-700 border border-amber-200">
                             {remQty.toLocaleString(undefined, { minimumFractionDigits: 2 })} {item.unit}
                           </span>
                         ) : (
                           <span className="text-slate-400">0.00 {item.unit}</span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase ${getStatusBadge(item.status)}`}>
+                      <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                        <span className={`inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase ${getStatusBadge(item.status)}`}>
                           {item.status}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                      <td className="py-2.5 px-4 text-right whitespace-nowrap">
                         {isPending ? (
                           <Link
                             to={`/transactions/istrv?istv_id=${item.transfer_record_id}`}
-                            className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-2.5 py-1 text-xs font-semibold text-white shadow-xs hover:bg-teal-500 transition-colors"
+                            className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-teal-600 px-2.5 py-1 text-xs font-semibold text-white shadow-xs hover:bg-teal-500 transition-colors"
                           >
                             <span>Receive</span>
                             <ArrowRight className="h-3 w-3" />
                           </Link>
                         ) : (
-                          <span className="text-slate-400 text-[11px]">Received</span>
+                          <span className="text-slate-400 text-[11px] whitespace-nowrap">Received</span>
                         )}
                       </td>
                     </tr>
@@ -295,6 +319,57 @@ export const InTransitPage: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Bar */}
+        {totalLines > 0 && (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-t border-slate-200 px-4 py-3 gap-3 bg-slate-50/50 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">Rows per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value))
+                  setPage(1)
+                }}
+                className="rounded-lg border border-slate-300 py-1 px-2 text-xs bg-white focus:outline-hidden"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <span className="text-slate-500 ml-2">
+                Showing {Math.min((safePage - 1) * pageSize + 1, totalLines)}–
+                {Math.min(safePage * pageSize, totalLines)} of {totalLines.toLocaleString()} in-transit lines
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-slate-500">
+                Page {safePage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                aria-label="Previous"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                <span>Previous</span>
+              </button>
+              <button
+                type="button"
+                aria-label="Next"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+              >
+                <span>Next</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
