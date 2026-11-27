@@ -14,6 +14,7 @@ export interface DashboardMetrics {
   activeWarehousesCount: number
   activeProjectsCount: number
   inTransitBatchesCount: number
+  inTransitLinesCount: number
   reconciliationDiscrepanciesCount: number
   hasDiscrepancies: boolean
 }
@@ -74,7 +75,7 @@ export function useDashboardData() {
     queryKey: ['dashboard', 'recent-activity'],
     queryFn: async () => {
       const response = await api.get<TrialBalanceResponse>(
-        '/reports/trial-balance?page=1&page_size=8'
+        '/reports/trial-balance?page=1&page_size=10'
       )
       return response.data
     },
@@ -106,16 +107,22 @@ export function useDashboardData() {
     ? projectsQuery.data.filter((p) => p.is_active).length
     : 3
   const inTransitItems = inTransitQuery.data || []
-  const inTransitBatchesCount = inTransitItems.length
+  const inTransitBatchesCount = new Set(
+    inTransitItems.map((item) => item.istv_transaction_id || item.istv_number)
+  ).size
+  const inTransitLinesCount = inTransitItems.length
   const reconciliationDiscrepancies = reconciliationQuery.data || []
   const reconciliationDiscrepanciesCount = reconciliationDiscrepancies.length
   const recentMovements = recentActivityQuery.data?.items || []
+  const recentMovementsTotal =
+    recentActivityQuery.data?.total_count ?? recentMovements.length
 
   const metrics: DashboardMetrics = {
     totalCatalogItems,
     activeWarehousesCount,
     activeProjectsCount,
     inTransitBatchesCount,
+    inTransitLinesCount,
     reconciliationDiscrepanciesCount,
     hasDiscrepancies: reconciliationDiscrepanciesCount > 0,
   }
@@ -137,6 +144,7 @@ export function useDashboardData() {
     inTransitItems,
     reconciliationDiscrepancies,
     recentMovements,
+    recentMovementsTotal,
     isLoading,
     isError,
     refetchAll,

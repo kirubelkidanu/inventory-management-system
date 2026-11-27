@@ -25,12 +25,17 @@ export const DashboardPage: React.FC = () => {
     metrics,
     inTransitItems,
     recentMovements,
+    recentMovementsTotal,
     isLoading,
     refetchAll,
   } = useDashboardData()
 
-  const displayMovements = recentMovements
-  const displayInTransit = inTransitItems
+  const totalInTransitLines = inTransitItems.length
+  const distinctInTransitBatches = new Set(
+    inTransitItems.map((item) => item.istv_transaction_id || item.istv_number)
+  ).size
+  const displayInTransit = inTransitItems.slice(0, 10)
+  const displayMovements = recentMovements.slice(0, 10)
 
   const getTypeBadgeStyle = (type: string) => {
     switch (type) {
@@ -74,53 +79,59 @@ export const DashboardPage: React.FC = () => {
       {/* Summary KPI Metric Cards */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {/* 1. Total Catalog Items */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+        <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-xs font-semibold tracking-wide text-slate-500 uppercase">
               Registered SKUs
             </span>
-            <div className="rounded-lg border border-sky-100 bg-sky-50 p-2 text-sky-600">
+            <div className="shrink-0 rounded-lg border border-sky-100 bg-sky-50 p-2 text-sky-600">
               <PackageCheck className="h-5 w-5" />
             </div>
           </div>
-          <div className="mt-4">
-            <span className="text-3xl font-extrabold text-slate-900">
+          <div className="mt-4 min-w-0">
+            <span
+              title={metrics.totalCatalogItems.toLocaleString()}
+              className="block truncate text-3xl font-extrabold tabular-nums tracking-tight text-slate-900"
+            >
               {metrics.totalCatalogItems.toLocaleString()}
             </span>
-            <p className="mt-1 text-xs text-slate-500">Master Item Catalog</p>
+            <p className="mt-1 truncate text-xs text-slate-500">Master Item Catalog</p>
           </div>
         </div>
 
         {/* 2. Active Warehouses & Projects */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+        <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-xs font-semibold tracking-wide text-slate-500 uppercase">
               Operating Stores
             </span>
-            <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-600">
+            <div className="shrink-0 rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-600">
               <Warehouse className="h-5 w-5" />
             </div>
           </div>
-          <div className="mt-4">
-            <span className="text-3xl font-extrabold text-slate-900">
-              {metrics.activeWarehousesCount}
+          <div className="mt-4 min-w-0">
+            <span
+              title={metrics.activeWarehousesCount.toLocaleString()}
+              className="block truncate text-3xl font-extrabold tabular-nums tracking-tight text-slate-900"
+            >
+              {metrics.activeWarehousesCount.toLocaleString()}
             </span>
-            <p className="mt-1 text-xs text-slate-500">
-              {metrics.activeProjectsCount} Associated Active Projects
+            <p className="mt-1 truncate text-xs text-slate-500">
+              {metrics.activeProjectsCount.toLocaleString()} Associated Active Projects
             </p>
           </div>
         </div>
 
         {/* 3. In-Transit Transfer Batches */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+        <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-xs font-semibold tracking-wide text-slate-500 uppercase">
               In-Transit Batches
             </span>
             <div
               className={cn(
-                'rounded-lg border p-2',
-                metrics.inTransitBatchesCount > 0
+                'shrink-0 rounded-lg border p-2',
+                distinctInTransitBatches > 0
                   ? 'border-amber-200 bg-amber-50 text-amber-600'
                   : 'border-slate-200 bg-slate-50 text-slate-400'
               )}
@@ -128,30 +139,38 @@ export const DashboardPage: React.FC = () => {
               <Truck className="h-5 w-5" />
             </div>
           </div>
-          <div className="mt-4">
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-extrabold text-slate-900">
-                {metrics.inTransitBatchesCount}
+          <div className="mt-4 min-w-0">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span
+                title={distinctInTransitBatches.toLocaleString()}
+                className="truncate text-3xl font-extrabold tabular-nums tracking-tight text-slate-900"
+              >
+                {distinctInTransitBatches.toLocaleString()}
               </span>
-              {metrics.inTransitBatchesCount > 0 && (
-                <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+              {distinctInTransitBatches > 0 && (
+                <span className="shrink-0 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                   En-Route
                 </span>
               )}
             </div>
-            <p className="mt-1 text-xs text-slate-500">Awaiting ISTRV Destination Receipt</p>
+            <p
+              title={`${totalInTransitLines.toLocaleString()} item lines awaiting ISTRV receipt`}
+              className="mt-1 truncate text-xs text-slate-500 tabular-nums"
+            >
+              {totalInTransitLines.toLocaleString()} item lines awaiting ISTRV receipt
+            </p>
           </div>
         </div>
 
         {/* 4. Reconciliation Discrepancy Status */}
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+        <div className="min-w-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-5 shadow-xs transition-shadow hover:shadow-md">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-xs font-semibold tracking-wide text-slate-500 uppercase">
               Ledger Health
             </span>
             <div
               className={cn(
-                'rounded-lg border p-2',
+                'shrink-0 rounded-lg border p-2',
                 metrics.hasDiscrepancies
                   ? 'border-red-200 bg-red-50 text-red-600'
                   : 'border-emerald-200 bg-emerald-50 text-emerald-600'
@@ -164,18 +183,23 @@ export const DashboardPage: React.FC = () => {
               )}
             </div>
           </div>
-          <div className="mt-4">
+          <div className="mt-4 min-w-0">
             {metrics.hasDiscrepancies ? (
-              <div>
-                <span className="text-3xl font-extrabold text-red-600">
-                  {metrics.reconciliationDiscrepanciesCount}
+              <div className="min-w-0">
+                <span
+                  title={metrics.reconciliationDiscrepanciesCount.toLocaleString()}
+                  className="block truncate text-3xl font-extrabold tabular-nums tracking-tight text-red-600"
+                >
+                  {metrics.reconciliationDiscrepanciesCount.toLocaleString()}
                 </span>
-                <p className="mt-1 text-xs font-medium text-red-600">Discrepancies Detected</p>
+                <p className="mt-1 truncate text-xs font-medium text-red-600">Discrepancies Detected</p>
               </div>
             ) : (
-              <div>
-                <span className="text-3xl font-extrabold text-emerald-600">Balanced</span>
-                <p className="mt-1 text-xs text-slate-500">Zero Dual-Write Drift</p>
+              <div className="min-w-0">
+                <span className="block truncate text-3xl font-extrabold tabular-nums tracking-tight text-emerald-600">
+                  Balanced
+                </span>
+                <p className="mt-1 truncate text-xs text-slate-500">Zero Dual-Write Drift</p>
               </div>
             )}
           </div>
@@ -303,13 +327,13 @@ export const DashboardPage: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {displayInTransit.map((tr) => (
-                  <tr key={tr.transfer_record_id} className="hover:bg-slate-50/70">
+                  <tr key={`${tr.transfer_record_id}-${tr.item_id}`} className="hover:bg-slate-50/70">
                     <td className="px-4 py-3 font-mono font-semibold text-slate-900">
                       {tr.istv_number}
                     </td>
                     <td className="px-4 py-3 text-slate-700">
-                      <span className="font-medium">{tr.source_warehouse_code}</span> &rarr;{' '}
-                      <span className="font-medium">{tr.destination_warehouse_code}</span>
+                      <span className="font-medium">{tr.source_warehouse_code || tr.source_warehouse_name}</span> &rarr;{' '}
+                      <span className="font-medium">{tr.destination_warehouse_code || tr.destination_warehouse_name}</span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       <p className="font-medium text-slate-800">{tr.plate_no || 'Pending Plate'}</p>
@@ -342,6 +366,20 @@ export const DashboardPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+
+            {totalInTransitLines > 10 && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-xs">
+                <span className="text-slate-600">
+                  Showing 10 of {totalInTransitLines.toLocaleString()} in-transit line items
+                </span>
+                <Link
+                  to="/reports/in-transit"
+                  className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-600 shadow-xs hover:bg-sky-50 hover:text-sky-700 transition-colors"
+                >
+                  <span>View All in In-Transit Tracking &rarr;</span>
+                </Link>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -366,8 +404,7 @@ export const DashboardPage: React.FC = () => {
             to="/reports/trial-balance"
             className="inline-flex items-center gap-1 text-xs font-semibold text-sky-600 hover:text-sky-700"
           >
-            <span>Full Trial Balance</span>
-            <ArrowRight className="h-3.5 w-3.5" />
+            <span>View Full Trial Balance &rarr;</span>
           </Link>
         </div>
 
@@ -436,6 +473,20 @@ export const DashboardPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+
+            {recentMovementsTotal > displayMovements.length && (
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-xs">
+                <span className="text-slate-600">
+                  Showing {displayMovements.length} of {recentMovementsTotal.toLocaleString()} physical stock movements
+                </span>
+                <Link
+                  to="/reports/trial-balance"
+                  className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-600 shadow-xs hover:bg-sky-50 hover:text-sky-700 transition-colors"
+                >
+                  <span>View Full Trial Balance &rarr;</span>
+                </Link>
+              </div>
+            )}
           </div>
         )}
       </div>
