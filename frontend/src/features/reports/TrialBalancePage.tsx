@@ -96,7 +96,10 @@ export const TrialBalancePage: React.FC = () => {
   }
 
   const handleExportExcel = () => {
-    exportMutation.mutate(queryParams)
+    exportMutation.mutate({
+      ...queryParams,
+      view: isRemainingView ? 'remaining' : undefined,
+    })
   }
 
   const getTypeBadge = (type: string) => {
@@ -167,12 +170,12 @@ export const TrialBalancePage: React.FC = () => {
             {exportMutation.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Exporting Excel...</span>
+                <span>{isRemainingView ? 'Exporting Remaining...' : 'Exporting Excel...'}</span>
               </>
             ) : (
               <>
                 <Download className="h-4 w-4" />
-                <span>Export Excel (.xlsx)</span>
+                <span>{isRemainingView ? 'Export Remaining (.xlsx)' : 'Export Excel (.xlsx)'}</span>
               </>
             )}
           </button>

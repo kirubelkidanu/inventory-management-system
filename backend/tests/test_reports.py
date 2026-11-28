@@ -99,12 +99,19 @@ class FakeReportService:
         category_id=None,
         transaction_type=None,
         search=None,
+        view=None,
     ):
+        self.last_export_view = view
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Trial Balance"
-        ws.append(["Date", "Tx Number", "IN", "OUT"])
-        ws.append(["2026-09-18", "GRV-001", 100.0, 0.0])
+        if (view or "").strip().lower() == "remaining":
+            ws.title = "Remaining Stock Summary"
+            ws.append(["Item Code", "Total IN", "Total OUT", "Remaining Qty"])
+            ws.append(["01-CM-00001", 100.0, 0.0, 100.0])
+        else:
+            ws.title = "Trial Balance"
+            ws.append(["Date", "Tx Number", "IN", "OUT"])
+            ws.append(["2026-09-18", "GRV-001", 100.0, 0.0])
         stream = io.BytesIO()
         wb.save(stream)
         stream.seek(0)
@@ -1307,3 +1314,136 @@ async def test_service_trial_balance_remaining_qty_ignores_stale_or_backdated_ru
     assert summary.remaining_value == expected_val
     assert res.total_remaining_qty == Decimal("263.0000")
     assert res.total_remaining_value == expected_val
+
+
+@pytest.mark.asyncio
+async def test_service_export_trial_balance_excel_remaining_view_only():
+    """
+    Verifies export_trial_balance_excel(..., view='remaining') outputs a single-sheet
+    workbook with only 'Remaining Stock Summary' and an accurate TOTAL row, while
+    the default export outputs ['Trial Balance', 'Remaining Stock Summary'].
+    """
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    base_dt = datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc)
+
+    raw_rows = [
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 11, 2),
+            "created_at": base_dt + timedelta(hours=1),
+            "transaction_id": uuid4(),
+            "transaction_number": "SIV-001",
+            "transaction_type": "SIV",
+            "item_id": item_id,
+            "item_code": "01-CM-00001",
+            "item_description": "Portland Cement",
+            "category_name": "CEMENT",
+            "unit": "BAG",
+            "warehouse_id": wh_id,
+            "warehouse_code": "KZ-WH-001",
+            "warehouse_name": "Kazanchis Store",
+            "project_name": "Kazanchis",
+            "movement_type": "OUT",
+            "quantity": Decimal("5.0000"),
+            "signed_quantity": Decimal("-5.0000"),
+            "running_balance": Decimal("15.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Store Keeper",
+            "unit_price": None,
+        },
+        {
+            "movement_id": uuid4(),
+            "movement_date": date(2026, 11, 1),
+            "created_at": base_dt,
+            "transaction_id": uuid4(),
+            "transaction_number": "GRV-001",
+            "transaction_type": "GRV",
+            "item_id": item_id,
+            "item_code": "01-CM-00001",
+            "item_description": "Portland Cement",
+            "category_name": "CEMENT",
+            "unit": "BAG",
+            "warehouse_id": wh_id,
+            "warehouse_code": "KZ-WH-001",
+            "warehouse_name": "Kazanchis Store",
+            "project_name": "Kazanchis",
+            "movement_type": "IN",
+            "quantity": Decimal("20.0000"),
+            "signed_quantity": Decimal("20.0000"),
+            "running_balance": Decimal("20.0000"),
+            "status": "POSTED",
+            "entered_by_name": "Store Keeper",
+            "unit_price": Decimal("150.0000"),
+        },
+    ]
+    service.repo.get_all_trial_balance_movements = AsyncMock(return_value=raw_rows)
+
+    # Single-sheet view='remaining' export
+    rem_stream = await service.export_trial_balance_excel(view="remaining")
+    rem_wb = openpyxl.load_workbook(rem_stream, data_only=True)
+    assert rem_wb.sheetnames == ["Remaining Stock Summary"]
+
+    ws_rem = rem_wb["Remaining Stock Summary"]
+    assert [cell.value for cell in ws_rem[4]] == [
+        "Item Code",
+        "Description",
+        "Category",
+        "Unit",
+        "WH Code",
+        "Warehouse Name",
+        "Project",
+        "Total IN",
+        "Total OUT",
+        "Remaining Qty",
+        "Weighted Avg Price (ETB)",
+        "Remaining Value (ETB)",
+    ]
+    data_row = [cell.value for cell in ws_rem[5]]
+    assert data_row[0] == "01-CM-00001"
+    assert data_row[7] == 20.0
+    assert data_row[8] == 5.0
+    assert data_row[9] == 15.0
+    assert data_row[10] == 150.0
+    assert data_row[11] == 2250.0
+
+    total_row = [cell.value for cell in ws_rem[6]]
+    assert total_row[0] == "TOTAL"
+    assert total_row[7] == 20.0
+    assert total_row[8] == 5.0
+    assert total_row[9] == 15.0
+    assert total_row[11] == 2250.0
+
+    # Default export still includes both sheets
+    default_stream = await service.export_trial_balance_excel()
+    default_wb = openpyxl.load_workbook(default_stream, data_only=True)
+    assert default_wb.sheetnames == ["Trial Balance", "Remaining Stock Summary"]
+
+
+@pytest.mark.asyncio
+async def test_api_trial_balance_export_remaining_view_filename(token_factory):
+    """Verifies view=remaining sets remaining_stock_YYYYMMDD.xlsx filename and forwards view."""
+    fake_service = FakeReportService()
+    app.dependency_overrides[get_report_service] = lambda: fake_service
+    token = token_factory(role="ADMIN")
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        rem_res = await client.get(
+            "/api/v1/reports/trial-balance/export?view=remaining",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        default_res = await client.get(
+            "/api/v1/reports/trial-balance/export",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    app.dependency_overrides.clear()
+    assert rem_res.status_code == 200
+    assert 'attachment; filename="remaining_stock_' in rem_res.headers["content-disposition"]
+    assert default_res.status_code == 200
+    assert 'attachment; filename="trial_balance_' in default_res.headers["content-disposition"]

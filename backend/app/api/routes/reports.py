@@ -71,6 +71,7 @@ async def export_trial_balance(
     category_id: Optional[uuid.UUID] = Query(None, description="Filter by category ID"),
     transaction_type: Optional[str] = Query(None, description="Filter by transaction type"),
     search: Optional[str] = Query(None, description="Search term"),
+    view: Optional[str] = Query(None, description="Pass 'remaining' to export only the Remaining Stock Summary sheet"),
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: ReportService = Depends(get_report_service),
 ):
@@ -83,9 +84,15 @@ async def export_trial_balance(
         category_id=category_id,
         transaction_type=transaction_type,
         search=search,
+        view=view,
     )
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"trial_balance_{timestamp}.xlsx"
+    date_str = datetime.now().strftime("%Y%m%d")
+    is_remaining_view = (view or "").strip().lower() == "remaining"
+    filename = (
+        f"remaining_stock_{date_str}.xlsx"
+        if is_remaining_view
+        else f"trial_balance_{date_str}.xlsx"
+    )
 
     return StreamingResponse(
         excel_stream,

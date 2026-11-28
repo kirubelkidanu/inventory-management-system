@@ -323,10 +323,12 @@ class ReportService:
         category_id: Optional[uuid.UUID] = None,
         transaction_type: Optional[str] = None,
         search: Optional[str] = None,
+        view: Optional[str] = None,
     ) -> io.BytesIO:
         """
         Exports the filtered trial balance and deduplicated Remaining Stock Summary
-        into a formatted 2-sheet Excel workbook.
+        into a formatted Excel workbook. When view == 'remaining', exports only the
+        single 'Remaining Stock Summary' sheet; otherwise exports both sheets.
         """
         raw_rows = await self.repo.get_all_trial_balance_movements(
             date_from=date_from,
@@ -342,9 +344,8 @@ class ReportService:
             self._compute_wac_and_summary(raw_rows)
         )
 
+        is_remaining_only = (view or "").strip().lower() == "remaining"
         wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Trial Balance"
 
         # Define Styles
         title_font = Font(name="Calibri", size=16, bold=True, color="1F497D")
@@ -362,167 +363,175 @@ class ReportService:
             top=Side(style="thin", color="000000"),
             bottom=Side(style="double", color="000000"),
         )
-
-        # Sheet 1: Title Block (22 columns: A..V)
-        ws.merge_cells("A1:V1")
-        title_cell = ws["A1"]
-        title_cell.value = "DETAILED INVENTORY MOVEMENT / TRIAL BALANCE"
-        title_cell.font = title_font
-        title_cell.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[1].height = 28
-
-        # Metadata Row
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        ws.merge_cells("A2:V2")
-        sub_cell = ws["A2"]
-        sub_cell.value = f"Generated: {generated_at} | Total Records: {len(raw_rows)}"
-        sub_cell.font = Font(name="Calibri", size=10, italic=True, color="595959")
-        sub_cell.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[2].height = 18
 
-        # Sheet 1 Headers
-        headers = [
-            "Date",
-            "Tx Number",
-            "Type",
-            "Ref / Doc No",
-            "Item Code",
-            "Description",
-            "Category",
-            "Unit",
-            "WH Code",
-            "Warehouse Name",
-            "Project",
-            "Vehicle Plate No",
-            "Driver Name",
-            "IN",
-            "OUT",
-            "Remaining Qty",
-            "Unit Price (ETB)",
-            "Total Value (ETB)",
-            "Weighted Avg Price (ETB)",
-            "Remaining Value (ETB)",
-            "Status",
-            "Entered By",
-        ]
+        if not is_remaining_only:
+            ws = wb.active
+            ws.title = "Trial Balance"
 
-        ws.append([])  # blank row 3
-        ws.append(headers)  # row 4
-        ws.row_dimensions[4].height = 24
+            # Sheet 1: Title Block (22 columns: A..V)
+            ws.merge_cells("A1:V1")
+            title_cell = ws["A1"]
+            title_cell.value = "DETAILED INVENTORY MOVEMENT / TRIAL BALANCE"
+            title_cell.font = title_font
+            title_cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[1].height = 28
 
-        for col_idx in range(1, len(headers) + 1):
-            cell = ws.cell(row=4, column=col_idx)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
+            # Metadata Row
+            ws.merge_cells("A2:V2")
+            sub_cell = ws["A2"]
+            sub_cell.value = f"Generated: {generated_at} | Total Records: {len(raw_rows)}"
+            sub_cell.font = Font(name="Calibri", size=10, italic=True, color="595959")
+            sub_cell.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[2].height = 18
 
-        # Data Rows
-        sum_in = Decimal("0.0000")
-        sum_out = Decimal("0.0000")
-        sum_val = Decimal("0.0000")
-
-        for row_dict in raw_rows:
-            item = self._map_trial_balance_item(
-                row_dict, per_movement_wac.get(row_dict["movement_id"])
-            )
-            sum_in += item.in_quantity
-            sum_out += item.out_quantity
-            if item.total_price is not None:
-                sum_val += item.total_price
-
-            row_data = [
-                item.movement_date.strftime("%Y-%m-%d"),
-                item.transaction_number,
-                item.transaction_type,
-                item.reference_number or "",
-                item.item_code,
-                item.item_description,
-                item.category_name,
-                item.unit,
-                item.warehouse_code,
-                item.warehouse_name,
-                item.project_name or "",
-                item.plate_no or "",
-                item.driver_name or "",
-                float(item.in_quantity),
-                float(item.out_quantity),
-                float(item.running_balance) if item.running_balance is not None else "",
-                float(item.unit_price) if item.unit_price is not None else "",
-                float(item.total_price) if item.total_price is not None else "",
-                float(item.weighted_avg_unit_price) if item.weighted_avg_unit_price is not None else "",
-                float(item.remaining_value) if item.remaining_value is not None else "",
-                item.status,
-                item.entered_by_name,
+            # Sheet 1 Headers
+            headers = [
+                "Date",
+                "Tx Number",
+                "Type",
+                "Ref / Doc No",
+                "Item Code",
+                "Description",
+                "Category",
+                "Unit",
+                "WH Code",
+                "Warehouse Name",
+                "Project",
+                "Vehicle Plate No",
+                "Driver Name",
+                "IN",
+                "OUT",
+                "Remaining Qty",
+                "Unit Price (ETB)",
+                "Total Value (ETB)",
+                "Weighted Avg Price (ETB)",
+                "Remaining Value (ETB)",
+                "Status",
+                "Entered By",
             ]
-            ws.append(row_data)
-            current_row = ws.max_row
-            ws.row_dimensions[current_row].height = 19
+
+            ws.append([])  # blank row 3
+            ws.append(headers)  # row 4
+            ws.row_dimensions[4].height = 24
 
             for col_idx in range(1, len(headers) + 1):
-                cell = ws.cell(row=current_row, column=col_idx)
+                cell = ws.cell(row=4, column=col_idx)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal="center", vertical="center")
                 cell.border = thin_border
-                cell.font = Font(name="Calibri", size=10)
-                if col_idx in (14, 15, 16):
+
+            # Data Rows
+            sum_in = Decimal("0.0000")
+            sum_out = Decimal("0.0000")
+            sum_val = Decimal("0.0000")
+
+            for row_dict in raw_rows:
+                item = self._map_trial_balance_item(
+                    row_dict, per_movement_wac.get(row_dict["movement_id"])
+                )
+                sum_in += item.in_quantity
+                sum_out += item.out_quantity
+                if item.total_price is not None:
+                    sum_val += item.total_price
+
+                row_data = [
+                    item.movement_date.strftime("%Y-%m-%d"),
+                    item.transaction_number,
+                    item.transaction_type,
+                    item.reference_number or "",
+                    item.item_code,
+                    item.item_description,
+                    item.category_name,
+                    item.unit,
+                    item.warehouse_code,
+                    item.warehouse_name,
+                    item.project_name or "",
+                    item.plate_no or "",
+                    item.driver_name or "",
+                    float(item.in_quantity),
+                    float(item.out_quantity),
+                    float(item.running_balance) if item.running_balance is not None else "",
+                    float(item.unit_price) if item.unit_price is not None else "",
+                    float(item.total_price) if item.total_price is not None else "",
+                    float(item.weighted_avg_unit_price) if item.weighted_avg_unit_price is not None else "",
+                    float(item.remaining_value) if item.remaining_value is not None else "",
+                    item.status,
+                    item.entered_by_name,
+                ]
+                ws.append(row_data)
+                current_row = ws.max_row
+                ws.row_dimensions[current_row].height = 19
+
+                for col_idx in range(1, len(headers) + 1):
+                    cell = ws.cell(row=current_row, column=col_idx)
+                    cell.border = thin_border
+                    cell.font = Font(name="Calibri", size=10)
+                    if col_idx in (14, 15, 16):
+                        cell.alignment = Alignment(horizontal="right", vertical="center")
+                        cell.number_format = "#,##0.0000"
+                    elif col_idx in (17, 18, 19, 20):
+                        cell.alignment = Alignment(horizontal="right", vertical="center")
+                        cell.number_format = "#,##0.00"
+                    elif col_idx in (1, 3, 8, 9, 21):
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        cell.alignment = Alignment(horizontal="left", vertical="center")
+
+            # Sheet 1 Total Row (leave Remaining Qty / Remaining Value blank to avoid double-counting snapshots)
+            total_row_idx = ws.max_row + 1
+            ws.append(
+                [
+                    "TOTAL",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    float(sum_in),
+                    float(sum_out),
+                    "",
+                    "",
+                    float(sum_val),
+                    "",
+                    "",
+                    "",
+                    "",
+                ]
+            )
+            ws.row_dimensions[total_row_idx].height = 22
+            ws.merge_cells(f"A{total_row_idx}:M{total_row_idx}")
+            total_label = ws[f"A{total_row_idx}"]
+            total_label.alignment = Alignment(horizontal="right", vertical="center")
+
+            for col_idx in range(1, len(headers) + 1):
+                cell = ws.cell(row=total_row_idx, column=col_idx)
+                cell.font = total_font
+                cell.fill = total_fill
+                cell.border = double_bottom_border
+                if col_idx in (14, 15):
                     cell.alignment = Alignment(horizontal="right", vertical="center")
                     cell.number_format = "#,##0.0000"
-                elif col_idx in (17, 18, 19, 20):
+                elif col_idx == 18:
                     cell.alignment = Alignment(horizontal="right", vertical="center")
                     cell.number_format = "#,##0.00"
-                elif col_idx in (1, 3, 8, 9, 21):
-                    cell.alignment = Alignment(horizontal="center", vertical="center")
-                else:
-                    cell.alignment = Alignment(horizontal="left", vertical="center")
 
-        # Sheet 1 Total Row (leave Remaining Qty / Remaining Value blank to avoid double-counting snapshots)
-        total_row_idx = ws.max_row + 1
-        ws.append(
-            [
-                "TOTAL",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                float(sum_in),
-                float(sum_out),
-                "",
-                "",
-                float(sum_val),
-                "",
-                "",
-                "",
-                "",
-            ]
-        )
-        ws.row_dimensions[total_row_idx].height = 22
-        ws.merge_cells(f"A{total_row_idx}:M{total_row_idx}")
-        total_label = ws[f"A{total_row_idx}"]
-        total_label.alignment = Alignment(horizontal="right", vertical="center")
+            self._auto_fit_columns(ws)
 
-        for col_idx in range(1, len(headers) + 1):
-            cell = ws.cell(row=total_row_idx, column=col_idx)
-            cell.font = total_font
-            cell.fill = total_fill
-            cell.border = double_bottom_border
-            if col_idx in (14, 15):
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-                cell.number_format = "#,##0.0000"
-            elif col_idx == 18:
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-                cell.number_format = "#,##0.00"
+            ws_summary = wb.create_sheet(title="Remaining Stock Summary")
+        else:
+            ws_summary = wb.active
+            ws_summary.title = "Remaining Stock Summary"
 
-        self._auto_fit_columns(ws)
-
-        # Sheet 2: Remaining Stock Summary (12 columns: A..L)
-        ws_summary = wb.create_sheet(title="Remaining Stock Summary")
+        # Remaining Stock Summary sheet (12 columns: A..L)
         ws_summary.merge_cells("A1:L1")
         sum_title = ws_summary["A1"]
         sum_title.value = "REMAINING STOCK SUMMARY & WEIGHTED AVERAGE VALUATION"

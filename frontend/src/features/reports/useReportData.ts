@@ -19,6 +19,10 @@ export interface TrialBalanceFilterParams {
   search?: string
 }
 
+export interface TrialBalanceExportParams extends TrialBalanceFilterParams {
+  view?: 'remaining'
+}
+
 export interface InTransitFilterParams {
   source_warehouse_id?: string
   destination_warehouse_id?: string
@@ -87,7 +91,7 @@ export function useTrialBalance(filters: TrialBalanceFilterParams = {}) {
 }
 
 export function useExportTrialBalance() {
-  return useMutation<void, Error, TrialBalanceFilterParams>({
+  return useMutation<void, Error, TrialBalanceExportParams>({
     mutationFn: async (filters) => {
       const params: Record<string, string | number> = {}
 
@@ -102,6 +106,9 @@ export function useExportTrialBalance() {
       }
       if (filters.search && filters.search.trim()) {
         params.search = filters.search.trim()
+      }
+      if (filters.view) {
+        params.view = filters.view
       }
 
       const response = await api.get('/reports/trial-balance/export', {
@@ -118,7 +125,11 @@ export function useExportTrialBalance() {
       link.href = downloadUrl
 
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-      link.setAttribute('download', `trial_balance_${dateStr}.xlsx`)
+      const filename =
+        filters.view === 'remaining'
+          ? `remaining_stock_${dateStr}.xlsx`
+          : `trial_balance_${dateStr}.xlsx`
+      link.setAttribute('download', filename)
       document.body.appendChild(link)
       link.click()
       link.remove()
