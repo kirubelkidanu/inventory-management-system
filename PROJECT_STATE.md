@@ -1,5 +1,18 @@
 ## Current Phase
 
+Trial Balance Unified `Remaining` Tab & Chronological `Remaining Qty` Fix Complete
+
+- **Backend `Remaining Qty` Fix (`backend/app/services/report.py`, `backend/app/repositories/report.py`)**:
+  * Fixed `ReportService._compute_wac_and_summary` to sort movements chronologically ascending by `(movement_date, created_at, str(movement_id))` (with matching `StockMovement.id.desc()` tie-breaker in `ReportRepository.get_all_trial_balance_movements`).
+  * Tracked cumulative quantity chronologically (`+qty` on `IN`, `-qty` on `OUT`) for Moving WAC and set `RemainingStockSummaryItem.remaining_qty = total_in - total_out` (with `remaining_value = (remaining_qty * weighted_avg_unit_price).quantize(Decimal("0.01"))`) so stale or backdated `running_balance` snapshots cannot skew summary balances.
+  * Added regression test `test_service_trial_balance_remaining_qty_ignores_stale_or_backdated_running_balance` in `backend/tests/test_reports.py`.
+- **Frontend Unified `Remaining` Tab (`frontend/src/features/reports/TrialBalancePage.tsx`)**:
+  * Removed the separate second view toggle bar (`Movement Ledger` / `Remaining Stock Summary`).
+  * Added `Remaining` directly inside the main top filter pill bar (`All Types | GRV | SIV | ISTV | ISTRV | SRV | Adjustments | Remaining`), querying all movement types combined (`transaction_type = undefined`) while respecting date, warehouse, project, category, and search filters.
+  * Updated `docs/REPORTS.md`.
+
+## Current Phase
+
 Trial Balance Remaining Qty, Moving Weighted Average Cost (WAC) & 2-Sheet Excel Export Complete
 
 - **Backend WAC & Remaining Stock Summary (`backend/app/schemas/report.py`, `backend/app/services/report.py`, `backend/app/repositories/report.py`)**:

@@ -1220,3 +1220,90 @@ async def test_service_export_trial_balance_excel_two_sheets_and_summary_totals(
     assert s2_total[8] == 5.0
     assert s2_total[9] == 15.0
     assert s2_total[11] == 2250.0
+
+
+@pytest.mark.asyncio
+async def test_service_trial_balance_remaining_qty_ignores_stale_or_backdated_running_balance():
+    """
+    Regression test: reproduces descending/backdated input rows where a later-dated row
+    carries an older/stale running_balance snapshot (103.00) alongside a backdated
+    opening/receipt row (160.00). RemainingStockSummaryItem.remaining_qty must equal
+    total_in - total_out (263.0000), not 103.0000.
+    """
+    mock_session = AsyncMock()
+    service = ReportService(mock_session)
+
+    wh_id = uuid4()
+    item_id = uuid4()
+    base_dt = datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc)
+
+    # Backdated receipt of 160 @ 100 ETB (movement_date Nov 1, created_at Nov 2, stale running_balance=263)
+    row_backdated_in = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 11, 1),
+        "created_at": base_dt + timedelta(days=1),
+        "transaction_id": uuid4(),
+        "transaction_number": "ADJ-OPEN-001",
+        "transaction_type": "ADJUSTMENT",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Portland Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "KZ-WH-001",
+        "warehouse_name": "Kazanchis Store",
+        "movement_type": "IN",
+        "quantity": Decimal("160.0000"),
+        "signed_quantity": Decimal("160.0000"),
+        "running_balance": Decimal("263.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Admin",
+        "unit_price": Decimal("100.0000"),
+    }
+    # Earlier-posted receipt of 103 @ 200 ETB on later movement_date Nov 5 with stale running_balance=103
+    row_later_date_stale_rb = {
+        "movement_id": uuid4(),
+        "movement_date": date(2026, 11, 5),
+        "created_at": base_dt,
+        "transaction_id": uuid4(),
+        "transaction_number": "GRV-001",
+        "transaction_type": "GRV",
+        "item_id": item_id,
+        "item_code": "01-CM-00001",
+        "item_description": "Portland Cement",
+        "category_name": "CEMENT",
+        "unit": "BAG",
+        "warehouse_id": wh_id,
+        "warehouse_code": "KZ-WH-001",
+        "warehouse_name": "Kazanchis Store",
+        "movement_type": "IN",
+        "quantity": Decimal("103.0000"),
+        "signed_quantity": Decimal("103.0000"),
+        "running_balance": Decimal("103.0000"),
+        "status": "POSTED",
+        "entered_by_name": "Admin",
+        "unit_price": Decimal("200.0000"),
+    }
+
+    desc_rows = [row_later_date_stale_rb, row_backdated_in]
+    service.repo.get_trial_balance = AsyncMock(
+        return_value=(desc_rows, 2, Decimal("263.0000"), Decimal("0.0000"))
+    )
+    service.repo.get_all_trial_balance_movements = AsyncMock(return_value=desc_rows)
+
+    res = await service.get_trial_balance_report(page=1, page_size=50)
+
+    assert len(res.remaining_summary) == 1
+    summary = res.remaining_summary[0]
+    assert summary.total_in == Decimal("263.0000")
+    assert summary.total_out == Decimal("0.0000")
+    assert summary.remaining_qty == Decimal("263.0000")
+
+    # Chronological WAC: (160 * 100 + 103 * 200) / 263 = 36600 / 263 = 139.1635
+    expected_wac = (Decimal("36600") / Decimal("263")).quantize(Decimal("0.0001"))
+    expected_val = (Decimal("263.0000") * expected_wac).quantize(Decimal("0.01"))
+    assert summary.weighted_avg_unit_price == expected_wac
+    assert summary.remaining_value == expected_val
+    assert res.total_remaining_qty == Decimal("263.0000")
+    assert res.total_remaining_value == expected_val

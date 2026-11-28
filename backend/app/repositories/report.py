@@ -302,7 +302,9 @@ class ReportRepository:
             stmt = stmt.where(and_(*conditions))
 
         stmt = stmt.order_by(
-            StockMovement.movement_date.desc(), StockMovement.created_at.desc()
+            StockMovement.movement_date.desc(),
+            StockMovement.created_at.desc(),
+            StockMovement.id.desc(),
         )
         res = await self.session.execute(stmt)
         return [dict(r._mapping) for r in res.all()]

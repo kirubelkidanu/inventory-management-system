@@ -41,9 +41,9 @@ Columns:
 - Entered By / Authorized By
 - Created At
 
-Remaining Stock Summary (Sheet 2 in Excel export & Summary Tab in UI):
-- One deduplicated row per `(Warehouse, Item)` matching active filters:
-  - Item Code, Description, Category, Unit, WH Code, Warehouse Name, Project, Total IN, Total OUT, Remaining Qty, Weighted Avg Price (ETB), Remaining Value (ETB)
+Remaining Stock Summary (Sheet 2 in Excel export & `Remaining` tab inside the Trial Balance filter bar):
+- One deduplicated row per `(Warehouse, Item)` across all movement types matching active date, warehouse, project, category, and search filters:
+  - Item Code, Description, Category, Unit, WH Code, Warehouse Name, Project, Total IN, Total OUT, Remaining Qty (`Total IN - Total OUT`), Weighted Avg Price (ETB), Remaining Value (ETB)
 - Grand totals sum distinct `(Warehouse, Item)` balances and remaining values without double-counting historical movement rows.
 
 Filters:

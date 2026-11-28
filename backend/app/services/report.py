@@ -62,16 +62,18 @@ class ReportService:
         for _, group_rows in groups.items():
             ordered = sorted(
                 group_rows,
-                key=lambda r: (r["movement_date"], r["created_at"]),
+                key=lambda r: (
+                    r["movement_date"],
+                    r["created_at"],
+                    str(r["movement_id"]),
+                ),
             )
-            running_qty = Decimal("0.0000")
+            cumulative_qty = Decimal("0.0000")
             running_wac: Optional[Decimal] = None
             total_in = Decimal("0.0000")
             total_out = Decimal("0.0000")
             last_row: Optional[Dict[str, Any]] = None
-            last_remaining_qty = Decimal("0.0000")
             last_wac: Optional[Decimal] = None
-            last_rem_val: Optional[Decimal] = None
 
             for row in ordered:
                 movement_type = row.get("movement_type", "IN")
@@ -80,7 +82,7 @@ class ReportService:
                 unit_price = (
                     Decimal(str(raw_unit_price)) if raw_unit_price is not None else None
                 )
-                prev_qty = running_qty
+                prev_qty = cumulative_qty
 
                 if movement_type == "IN":
                     total_in += qty
@@ -91,37 +93,40 @@ class ReportService:
                             ) / (prev_qty + qty)
                         else:
                             running_wac = unit_price
-                    next_qty_fallback = prev_qty + qty
+                    cumulative_qty = prev_qty + qty
                 else:
                     total_out += qty
-                    next_qty_fallback = prev_qty - qty
+                    cumulative_qty = prev_qty - qty
 
                 raw_rb = row.get("running_balance")
-                remaining_qty = (
+                row_remaining_qty = (
                     Decimal(str(raw_rb)).quantize(Decimal("0.0001"))
                     if raw_rb is not None
-                    else next_qty_fallback.quantize(Decimal("0.0001"))
+                    else cumulative_qty.quantize(Decimal("0.0001"))
                 )
-                running_qty = remaining_qty
 
                 wac_display = (
                     running_wac.quantize(Decimal("0.0001"))
                     if running_wac is not None
                     else None
                 )
-                rem_val = (
-                    (remaining_qty * running_wac).quantize(Decimal("0.01"))
+                row_rem_val = (
+                    (row_remaining_qty * running_wac).quantize(Decimal("0.01"))
                     if running_wac is not None
                     else None
                 )
 
-                per_movement[row["movement_id"]] = (wac_display, rem_val)
+                per_movement[row["movement_id"]] = (wac_display, row_rem_val)
                 last_row = row
-                last_remaining_qty = remaining_qty
                 last_wac = wac_display
-                last_rem_val = rem_val
 
             if last_row is not None:
+                summary_remaining_qty = (total_in - total_out).quantize(Decimal("0.0001"))
+                summary_rem_val = (
+                    (summary_remaining_qty * last_wac).quantize(Decimal("0.01"))
+                    if last_wac is not None
+                    else None
+                )
                 summary_items.append(
                     RemainingStockSummaryItem(
                         item_id=last_row["item_id"],
@@ -135,9 +140,9 @@ class ReportService:
                         project_name=last_row.get("project_name"),
                         total_in=total_in.quantize(Decimal("0.0001")),
                         total_out=total_out.quantize(Decimal("0.0001")),
-                        remaining_qty=last_remaining_qty.quantize(Decimal("0.0001")),
+                        remaining_qty=summary_remaining_qty,
                         weighted_avg_unit_price=last_wac,
-                        remaining_value=last_rem_val,
+                        remaining_value=summary_rem_val,
                     )
                 )
 
